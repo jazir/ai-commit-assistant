@@ -215,24 +215,28 @@ def generate_commit_message(diff, files, temperature=0.7):
     Languages detected: {', '.join(languages) if languages else 'None specifically identified'}
     """
     
-    # Add recent commit history if available
+    # Add recent commit history if available (but clean it up)
     if repo_context['recent_commits']:
-        context += "\nRecent commits for these files:\n"
-        # List up to 5 recent commits to provide history context
-        for i, commit in enumerate(repo_context['recent_commits'][:5]):
-            context += f"- {commit['file']}: {commit['message']} ({commit['hash']})\n"
+        context += "\nRecent commit message patterns:\n"
+        # List up to 3 recent commits for style reference, but remove hashes
+        for i, commit in enumerate(repo_context['recent_commits'][:3]):
+            # Clean the commit message - remove any hash patterns
+            clean_message = commit['message'].split('(')[0].strip()  # Remove anything in parentheses
+            context += f"- {clean_message}\n"
     
     # Prepare a system message that instructs the AI how to generate commit messages
     system_message = """
     You are a git commit message generator that follows best practices. Generate concise, meaningful commit messages that:
     
     1. Use the conventional commits format when appropriate (type: description)
-    2. Start with a verb in imperative mood (e.g., "Add", "Fix", "Update")
+    2. Start with a verb in imperative mood (e.g., "Add", "Fix", "Update", "Refactor")
     3. Are concise but descriptive (under 72 characters for the first line)
     4. Focus on the "why" and "what" rather than the "how"
     5. Match the project's existing commit style if examples are provided
+    6. NEVER include commit hashes, issue numbers, or any parenthetical references unless specifically mentioned in the changes
+    7. Write in present tense as if the commit is being applied now
     
-    Respond ONLY with the suggested commit message, nothing else.
+    Respond ONLY with the suggested commit message text, nothing else. Do not include any metadata, hashes, or additional formatting.
     """
     
     # Create the user prompt with the diff and context
@@ -245,6 +249,8 @@ def generate_commit_message(diff, files, temperature=0.7):
     
     Diff summary:
     {diff[:3000]}  # Limit diff size to avoid exceeding token limits
+    
+    Generate a clean commit message without any commit hashes, issue numbers, or metadata.
     """
     
     # Call the OpenAI API to generate a commit message
@@ -264,7 +270,14 @@ def generate_commit_message(diff, files, temperature=0.7):
         
         # Extract the message from the response
         commit_message = response.choices[0].message.content.strip()
-        return commit_message
+        
+        # Clean up the message - remove any remaining hashes or unwanted patterns
+        # Remove patterns like (abc1234) or [abc1234] or #abc1234
+        import re
+        commit_message = re.sub(r'\s*[\(\[]?[a-f0-9]{6,8}[\)\]]?\s*$', '', commit_message)
+        commit_message = re.sub(r'\s*#[a-f0-9]{6,8}\s*', '', commit_message)
+        
+        return commit_message.strip()
         
     except Exception as e:
         # Return error message if API call fails

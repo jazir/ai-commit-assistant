@@ -12,7 +12,7 @@ setup(
     description="AI-powered Git commit message generator",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="",
+    url="https://github.com/jazir/commit-assistant.git",
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
