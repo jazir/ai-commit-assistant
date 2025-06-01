@@ -34,7 +34,7 @@ pip install commit-assistant
 ### Method 2: Install from Source (Recommended for Latest Features)
 
 ```bash
-git clone https://github.com/yourusername/commit-assistant.git
+git clone https://github.com/jazir/commit-assistant.git
 cd commit-assistant
 pip install -e .
 ```
@@ -44,7 +44,7 @@ pip install -e .
 **Step 1: Clone the Repository**
 
 ```bash
-git clone https://github.com/yourusername/commit-assistant.git
+git clone https://github.com/jazir/commit-assistant.git
 cd commit-assistant
 ```
 
@@ -492,7 +492,7 @@ commit-assistant/
 1. **Fork and Clone**
 
    ```bash
-   git clone https://github.com/yourusername/commit-assistant.git
+   git clone https://github.com/jazir/commit-assistant.git
    cd commit-assistant
    ```
 
@@ -804,9 +804,9 @@ MIT License - see LICENSE file for details.
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/commit-assistant/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/commit-assistant/discussions)
-- **Email**: your.email@example.com
+- **Issues**: [GitHub Issues](https://github.com/jazir/commit-assistant/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/jazir/commit-assistant/discussions)
+- **Email**: jazirsha@gmail.com
 
 ---
 
