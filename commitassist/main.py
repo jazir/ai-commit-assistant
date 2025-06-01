@@ -50,6 +50,10 @@ def get_git_diff():
         # Get staged files (modified existing files)
         for item in staged_files:
             changed_files.append(item.a_path or item.b_path)
+            # DEBUG: Print what files we detected
+            print(f"DEBUG: Staged files detected: {changed_files}")
+            print(f"DEBUG: Diff length: {len(diff)} characters")
+            print(f"DEBUG: First 200 chars of diff: {diff[:200]}")
             
         # Also check for new files that are staged
         try:
@@ -244,16 +248,27 @@ def generate_commit_message(diff, files, temperature=0.7):
     """
     
     # Create the user prompt with the diff and context
+    # Smart diff handling for large changes
+    if len(diff) > 5000:
+        # For large diffs, show a summary of changes rather than raw diff
+        diff_summary = f"Large changeset with {len(files)} files:\n"
+        for file in files:
+            diff_summary += f"- {file}\n"
+        diff_summary += f"\nFirst 2000 chars of diff:\n{diff[:2000]}"
+        diff_summary += f"\n\nLast 1000 chars of diff:\n{diff[-1000:]}"
+    else:
+        diff_summary = diff
+
     user_prompt = f"""
     Please suggest a commit message for the following changes:
-    
+
     {context}
-    
+
     Files changed: {', '.join(files)}
-    
+
     Diff summary:
-    {diff[:3000]}  # Limit diff size to avoid exceeding token limits
-    
+    {diff_summary}
+
     Generate a clean commit message without any commit hashes, issue numbers, or metadata.
     """
     
@@ -361,17 +376,28 @@ def generate_detailed_commit_message(diff, files, temperature=0.7):
     """
     
     # Create the user prompt with the diff and context
+    # Smart diff handling for large changes
+    if len(diff) > 5000:
+        # For large diffs, show a summary of changes rather than raw diff
+        diff_summary = f"Large changeset with {len(files)} files:\n"
+        for file in files:
+            diff_summary += f"- {file}\n"
+        diff_summary += f"\nFirst 2000 chars of diff:\n{diff[:2000]}"
+        diff_summary += f"\n\nLast 1000 chars of diff:\n{diff[-1000:]}"
+    else:
+        diff_summary = diff
+
     user_prompt = f"""
-    Please generate a detailed commit message with header and body for the following changes:
-    
+    Please suggest a commit message for the following changes:
+
     {context}
-    
+
     Files changed: {', '.join(files)}
-    
+
     Diff summary:
-    {diff[:3000]}
-    
-    Generate a professional commit message with clear header and informative body explaining the changes.
+    {diff_summary}
+
+    Generate a clean commit message without any commit hashes, issue numbers, or metadata.
     """
     
     # Call the OpenAI API to generate a detailed commit message
