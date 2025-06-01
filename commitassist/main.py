@@ -283,6 +283,152 @@ def generate_commit_message(diff, files, temperature=0.7):
         # Return error message if API call fails
         return f"Error generating commit message: {str(e)}"
 
+def generate_detailed_commit_message(diff, files, temperature=0.7):
+    """
+    Generate a detailed commit message with header and body using OpenAI's API.
+    
+    Args:
+        diff (str): The git diff text
+        files (list): List of changed files
+        temperature (float): Controls randomness in AI response (0.0-1.0)
+        
+    Returns:
+        str: Generated detailed commit message with header and body
+    """
+    if not diff:
+        return "No changes to analyze."
+    
+    # Get file types to provide context about programming languages
+    languages, extensions = detect_file_types(files)
+    
+    # Get repository context for better suggestions
+    repo_context = get_repo_context(files)
+    
+    # Format context information for the prompt
+    context = f"""
+    Repository: {repo_context['name']}
+    Branch: {repo_context['branch']}
+    
+    Languages detected: {', '.join(languages) if languages else 'None specifically identified'}
+    """
+    
+    # Add recent commit history if available (but clean it up)
+    if repo_context['recent_commits']:
+        context += "\nRecent commit message patterns:\n"
+        # List up to 3 recent commits for style reference, but remove hashes
+        for i, commit in enumerate(repo_context['recent_commits'][:3]):
+            # Clean the commit message - remove any hash patterns
+            clean_message = commit['message'].split('(')[0].strip()
+            context += f"- {clean_message}\n"
+    
+    # Prepare a system message for detailed commit messages
+    system_message = """
+    You are a git commit message generator that creates detailed, professional commit messages. Generate a commit message with both header and body that follows this format:
+
+    HEADER: Brief description (under 72 characters)
+    
+    BODY: Detailed explanation including what was changed and why
+
+    Guidelines:
+    1. Header should use conventional commits format (type: description)
+    2. Header should start with a verb in imperative mood (Add, Fix, Update, Refactor, etc.)
+    3. Body should explain the changes in detail with bullet points if multiple changes
+    4. Body should explain WHY the changes were made, not just what
+    5. Keep lines under 72 characters wide
+    6. NEVER include commit hashes, issue numbers, or metadata
+    7. Use present tense as if the commit is being applied now
+    8. Separate header and body with a blank line
+
+    Example format:
+    feat: Add user authentication system
+    
+    Implement JWT-based authentication to secure API endpoints.
+    
+    - Add login/logout functionality with token generation
+    - Create middleware for request validation
+    - Implement secure password hashing
+    - Set up session management for user state
+    
+    This addresses security requirements and improves user experience
+    by providing seamless authentication flow.
+
+    Respond with the complete commit message in this format.
+    """
+    
+    # Create the user prompt with the diff and context
+    user_prompt = f"""
+    Please generate a detailed commit message with header and body for the following changes:
+    
+    {context}
+    
+    Files changed: {', '.join(files)}
+    
+    Diff summary:
+    {diff[:3000]}
+    
+    Generate a professional commit message with clear header and informative body explaining the changes.
+    """
+    
+    # Call the OpenAI API to generate a detailed commit message
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=temperature,
+            max_tokens=300,  # Increased for detailed messages
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
+        )
+        
+        # Extract the message from the response
+        commit_message = response.choices[0].message.content.strip()
+        
+        # Clean up the message - remove any remaining hashes or unwanted patterns
+        import re
+        commit_message = re.sub(r'\s*[\(\[]?[a-f0-9]{6,8}[\)\]]?\s*$', '', commit_message)
+        commit_message = re.sub(r'\s*#[a-f0-9]{6,8}\s*', '', commit_message)
+        
+        return commit_message.strip()
+        
+    except Exception as e:
+        return f"Error generating detailed commit message: {str(e)}"
+
+
+def suggest_detailed_commit_message(count=1, temperature=0.7):
+    """
+    Generate detailed commit messages with header and body.
+    
+    Args:
+        count (int): Number of suggestions to generate
+        temperature (float): Controls randomness in AI response
+        
+    Returns:
+        list: List of suggested detailed messages
+    """
+    # Get the git diff
+    diff, files_or_error = get_git_diff()
+    
+    # If no diff is available, files_or_error will be an error message string
+    if not diff:
+        return [files_or_error]
+    
+    # If we reach here, files_or_error contains the list of files
+    file_list = files_or_error
+    
+    # Generate the requested number of detailed suggestions
+    suggestions = []
+    for i in range(count):
+        # Vary temperature slightly for more diverse suggestions
+        temp = temperature + (i * 0.05)
+        message = generate_detailed_commit_message(diff, file_list, temperature=min(temp, 1.0))
+        suggestions.append(message)
+        
+    return suggestions
+
 
 def suggest_commit_message(count=1, temperature=0.7):
     """
@@ -349,11 +495,13 @@ def cli():
 @cli.command()
 @click.option('--count', '-c', default=1, help='Number of suggestions to generate')
 @click.option('--temp', '-t', default=0.7, help='Temperature (creativity) of suggestions, 0.0-1.0')
-def suggest(count, temp):
+@click.option('--detailed', '-d', is_flag=True, help='Generate detailed commit with header and body')
+def suggest(count, temp, detailed):
     """
     Suggest commit messages based on staged changes.
     
     Analyzes your git diff and generates commit message suggestions.
+    Use --detailed for messages with both header and body.
     """
     # Validate inputs
     count = max(1, min(5, count))  # Limit between 1 and 5
@@ -361,15 +509,13 @@ def suggest(count, temp):
     
     click.echo("Analyzing staged changes...")
     
-    # Get suggestions
-    suggestions = suggest_commit_message(count=count, temperature=temp)
-    
-    # Debug: Print what we got
-    # print(f"DEBUG: suggestions type: {type(suggestions)}")
-    # print(f"DEBUG: suggestions content: {suggestions}")
-    # if suggestions:
-        # print(f"DEBUG: first suggestion type: {type(suggestions[0])}")
-        # print(f"DEBUG: first suggestion content: {suggestions[0]}")
+    # Get suggestions based on detailed flag
+    if detailed:
+        suggestions = suggest_detailed_commit_message(count=count, temperature=temp)
+        message_type = "detailed commit message"
+    else:
+        suggestions = suggest_commit_message(count=count, temperature=temp)
+        message_type = "commit message"
     
     # Check if we got an error or warning message
     if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
@@ -377,20 +523,76 @@ def suggest(count, temp):
         click.secho(suggestions[0], fg='yellow')
     else:
         # Display all suggestions
-        click.echo(f"\nGenerated {len(suggestions)} commit message suggestion(s):\n")
+        click.echo(f"\nGenerated {len(suggestions)} {message_type} suggestion(s):\n")
         
         for i, message in enumerate(suggestions):
-            # Make sure message is a string
-            if isinstance(message, str):
-                # Display message with a number
-                click.secho(f"[{i+1}] ", fg='blue', nl=False)
-                click.echo(message)
-                click.echo("")  # Empty line between suggestions
-            else:
-                click.echo(f"[{i+1}] DEBUG: Non-string message: {message}")
+            # Display message with a number
+            click.secho(f"[{i+1}] ", fg='blue', nl=False)
+            click.echo("=" * 60)
+            click.echo(message)
+            click.echo("=" * 60)
+            click.echo("")  # Empty line between suggestions
             
-        click.echo("To use a suggestion: git commit -m \"suggested message\"")
+        # Provide usage instructions based on message type
+        if detailed:
+            click.echo("To use a detailed suggestion:")
+            click.echo('git commit -m "Header from above" -m "Body from above"')
+            click.echo("Or simply: git commit (then paste the full message in your editor)")
+        else:
+            click.echo("To use a suggestion: git commit -m \"suggested message\"")
 
+@cli.command()
+@click.option('--temp', '-t', default=0.7, help='Temperature (creativity) of suggestions, 0.0-1.0')
+def commit(temp):
+    """
+    Generate a detailed commit message and format it for easy copying.
+    
+    This command generates a single detailed commit message optimized for copy-paste.
+    """
+    temp = max(0.0, min(1.0, temp))
+    
+    click.echo("Generating detailed commit message...")
+    
+    suggestions = suggest_detailed_commit_message(count=1, temperature=temp)
+    
+    if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
+        click.secho(suggestions[0], fg='yellow')
+        return
+    
+    message = suggestions[0]
+    
+    # Split into header and body for formatted output
+    lines = message.split('\n')
+    header = lines[0] if lines else ""
+    body = '\n'.join(lines[2:]) if len(lines) > 2 else ""  # Skip header and blank line
+    
+    click.echo("\n" + "=" * 70)
+    click.secho("COMMIT MESSAGE", fg='green', bold=True)
+    click.echo("=" * 70)
+    click.echo(message)
+    click.echo("=" * 70)
+    
+    click.echo("\n" + "=" * 70)
+    click.secho("COPY-PASTE COMMANDS", fg='blue', bold=True)
+    click.echo("=" * 70)
+    
+    if body:
+        click.echo("Option 1 - Using multiple -m flags:")
+        click.echo(f'git commit -m "{header}" -m "{body.replace(chr(10), chr(10))}"')
+        
+        click.echo("\nOption 2 - Using editor (recommended):")
+        click.echo("git commit")
+        click.echo("(Then paste the full message above in your editor)")
+        
+        click.echo("\nOption 3 - PowerShell multi-line:")
+        click.echo('git commit -m @"')
+        click.echo(message)
+        click.echo('"@')
+    else:
+        click.echo("Single line commit:")
+        click.echo(f'git commit -m "{header}"')
+    
+    click.echo("=" * 70)
 
 @cli.command()
 def setup():
