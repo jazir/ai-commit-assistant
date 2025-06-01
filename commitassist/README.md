@@ -564,7 +564,7 @@ python -m commitassist.main install-global-hook
 
 ### Code Organization
 
-- **`main.py`**: Contains core commit message generation, CLI interface, and user interaction
+- **`main.py`**: Contains core commit message generation, CLI interface, and user interaction code
 - **`hooks.py`**: Contains all Git hook management functionality (install, uninstall, status checking)
 - **Separation of Concerns**: Hook functionality is modular and can be imported independently
 
