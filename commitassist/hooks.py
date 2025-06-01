@@ -326,7 +326,7 @@ if [ -z "$2" ]; then
             
             # Only add suggestion if we got a meaningful message
             if [ -n "$MESSAGE" ] && [ "$MESSAGE" != "Analyzing staged changes..." ]; then
-                echo "# 🤖 AI Suggested commit message:" >> "$1"
+                echo "# AI Suggested commit message:" >> "$1"
                 echo "# $MESSAGE" >> "$1"
                 echo "#" >> "$1"
                 echo "# Remove the '#' above to use this suggestion" >> "$1"
@@ -347,23 +347,18 @@ fi
 def _write_hook_file(hook_path, hook_content):
     """
     Write the hook content to a file and make it executable.
-    
-    Args:
-        hook_path (str): Path to the hook file
-        hook_content (str): Content of the hook script
     """
     # Convert Windows line endings to Unix for compatibility
     hook_content = hook_content.replace('\r\n', '\n')
     
-    # Write the hook file
-    with open(hook_path, 'w', newline='\n') as f:
+    # Write with UTF-8 encoding
+    with open(hook_path, 'w', newline='\n', encoding='utf-8') as f:
         f.write(hook_content)
     
-    # Make the hook executable
+    # Make executable
     try:
         os.chmod(hook_path, 0o755)
     except:
-        # On Windows, this may fail but hooks will still run
         pass
 
 
