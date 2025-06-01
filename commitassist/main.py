@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import git
 import platform
@@ -461,6 +462,117 @@ def suggest_commit_message(count=1, temperature=0.7):
         
     return suggestions
 
+def execute_git_commit(message, is_detailed=False):
+    """
+    Execute git commit with the selected message.
+    
+    Args:
+        message (str): The commit message to use
+        is_detailed (bool): Whether the message has header and body
+        
+    Returns:
+        bool: True if commit was successful, False otherwise
+    """
+    try:
+        if is_detailed and '\n\n' in message:
+            # Split detailed message into header and body
+            parts = message.split('\n\n', 1)
+            header = parts[0]
+            body = parts[1] if len(parts) > 1 else ""
+            
+            # Use multiple -m flags for header and body
+            if body:
+                result = subprocess.run([
+                    'git', 'commit', '-m', header, '-m', body
+                ], capture_output=True, text=True)
+            else:
+                result = subprocess.run([
+                    'git', 'commit', '-m', header
+                ], capture_output=True, text=True)
+        else:
+            # Simple single-line message
+            result = subprocess.run([
+                'git', 'commit', '-m', message
+            ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            click.secho("✓ Commit successful!", fg='green')
+            click.echo(result.stdout)
+            return True
+        else:
+            click.secho("✗ Commit failed:", fg='red')
+            click.echo(result.stderr)
+            return False
+            
+    except Exception as e:
+        click.secho(f"✗ Error executing commit: {str(e)}", fg='red')
+        return False
+
+
+def get_user_selection(suggestions, message_type="commit message"):
+    """
+    Display suggestions and get user selection.
+    
+    Args:
+        suggestions (list): List of suggested messages
+        message_type (str): Type of message for display
+        
+    Returns:
+        tuple: (selected_message, user_choice) or (None, None) if cancelled
+    """
+    if not suggestions:
+        return None, None
+    
+    # Display all suggestions
+    click.echo(f"\nGenerated {len(suggestions)} {message_type} suggestion(s):\n")
+    
+    for i, message in enumerate(suggestions):
+        click.secho(f"[{i+1}] ", fg='blue', nl=False)
+        click.echo("=" * 60)
+        click.echo(message)
+        click.echo("=" * 60)
+        click.echo("")
+    
+    # Get user choice
+    while True:
+        click.echo("Options:")
+        click.echo("  1-{}: Select a suggestion to commit".format(len(suggestions)))
+        click.echo("  c: Copy a suggestion to clipboard (if available)")
+        click.echo("  r: Regenerate suggestions")
+        click.echo("  q: Quit without committing")
+        
+        choice = click.prompt("\nWhat would you like to do?", type=str).strip().lower()
+        
+        # Handle quit
+        if choice in ['q', 'quit', 'exit']:
+            return None, 'quit'
+        
+        # Handle regenerate
+        if choice in ['r', 'regenerate', 'regen']:
+            return None, 'regenerate'
+        
+        # Handle copy (basic implementation)
+        if choice in ['c', 'copy']:
+            copy_choice = click.prompt(f"Which suggestion to copy? (1-{len(suggestions)})", type=int)
+            if 1 <= copy_choice <= len(suggestions):
+                selected_message = suggestions[copy_choice - 1]
+                click.echo(f"\nSelected message:\n{selected_message}")
+                click.echo("\nCopy the message above and use: git commit")
+                return None, 'copy'
+            else:
+                click.secho("Invalid selection. Please try again.", fg='yellow')
+                continue
+        
+        # Handle number selection
+        try:
+            selection = int(choice)
+            if 1 <= selection <= len(suggestions):
+                return suggestions[selection - 1], selection
+            else:
+                click.secho(f"Invalid selection. Please choose 1-{len(suggestions)}.", fg='yellow')
+        except ValueError:
+            click.secho("Invalid input. Please enter a number, 'c', 'r', or 'q'.", fg='yellow')
+
 # Define the CLI commands using Click
 @click.group()
 def cli():
@@ -496,50 +608,123 @@ def cli():
 @click.option('--count', '-c', default=1, help='Number of suggestions to generate')
 @click.option('--temp', '-t', default=0.7, help='Temperature (creativity) of suggestions, 0.0-1.0')
 @click.option('--detailed', '-d', is_flag=True, help='Generate detailed commit with header and body')
-def suggest(count, temp, detailed):
+@click.option('--interactive', '-i', is_flag=True, help='Interactive mode: select and commit directly')
+@click.option('--auto-commit', '-a', is_flag=True, help='Auto-commit the first suggestion without prompting')
+def suggest(count, temp, detailed, interactive, auto_commit):
     """
     Suggest commit messages based on staged changes.
     
     Analyzes your git diff and generates commit message suggestions.
     Use --detailed for messages with both header and body.
+    Use --interactive to select and commit directly.
+    Use --auto-commit to automatically commit the first suggestion.
     """
     # Validate inputs
-    count = max(1, min(5, count))  # Limit between 1 and 5
-    temp = max(0.0, min(1.0, temp))  # Limit between 0.0 and 1.0
+    count = max(1, min(5, count))
+    temp = max(0.0, min(1.0, temp))
+    
+    # For auto-commit, we only need one suggestion
+    if auto_commit:
+        count = 1
+    
+    # For interactive mode, default to more suggestions if not specified
+    if interactive and count == 1:
+        count = 3
     
     click.echo("Analyzing staged changes...")
     
-    # Get suggestions based on detailed flag
-    if detailed:
-        suggestions = suggest_detailed_commit_message(count=count, temperature=temp)
-        message_type = "detailed commit message"
-    else:
-        suggestions = suggest_commit_message(count=count, temperature=temp)
-        message_type = "commit message"
-    
-    # Check if we got an error or warning message
-    if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
-        # Error or warning message
-        click.secho(suggestions[0], fg='yellow')
-    else:
-        # Display all suggestions
-        click.echo(f"\nGenerated {len(suggestions)} {message_type} suggestion(s):\n")
-        
-        for i, message in enumerate(suggestions):
-            # Display message with a number
-            click.secho(f"[{i+1}] ", fg='blue', nl=False)
-            click.echo("=" * 60)
-            click.echo(message)
-            click.echo("=" * 60)
-            click.echo("")  # Empty line between suggestions
-            
-        # Provide usage instructions based on message type
+    # Generate suggestions
+    while True:  # Loop for regeneration
         if detailed:
-            click.echo("To use a detailed suggestion:")
-            click.echo('git commit -m "Header from above" -m "Body from above"')
-            click.echo("Or simply: git commit (then paste the full message in your editor)")
+            suggestions = suggest_detailed_commit_message(count=count, temperature=temp)
+            message_type = "detailed commit message"
         else:
-            click.echo("To use a suggestion: git commit -m \"suggested message\"")
+            suggestions = suggest_commit_message(count=count, temperature=temp)
+            message_type = "commit message"
+        
+        # Check if we got an error or warning message
+        if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
+            click.secho(suggestions[0], fg='yellow')
+            return
+        
+        # Auto-commit mode
+        if auto_commit:
+            click.echo(f"\nAuto-committing with suggestion:")
+            click.echo("=" * 60)
+            click.echo(suggestions[0])
+            click.echo("=" * 60)
+            
+            if click.confirm("\nProceed with this commit?", default=True):
+                success = execute_git_commit(suggestions[0], detailed)
+                if success:
+                    return
+                else:
+                    click.echo("Commit failed. Try manual commit or fix the issues.")
+                    return
+            else:
+                click.echo("Auto-commit cancelled.")
+                return
+        
+        # Interactive mode
+        elif interactive:
+            selected_message, choice = get_user_selection(suggestions, message_type)
+            
+            if choice == 'quit':
+                click.echo("Exiting without committing.")
+                return
+            elif choice == 'regenerate':
+                click.echo("Regenerating suggestions...")
+                # Vary temperature slightly for different results
+                temp = min(1.0, temp + 0.1)
+                continue
+            elif choice == 'copy':
+                return
+            elif selected_message:
+                # Confirm and commit
+                click.echo(f"\nSelected message:")
+                click.echo("=" * 60)
+                click.echo(selected_message)
+                click.echo("=" * 60)
+                
+                if click.confirm("\nCommit with this message?", default=True):
+                    success = execute_git_commit(selected_message, detailed)
+                    if success:
+                        return
+                    else:
+                        # Ask if they want to try again or exit
+                        if click.confirm("Would you like to try a different message?"):
+                            continue
+                        else:
+                            return
+                else:
+                    # Ask if they want to select again or exit
+                    if click.confirm("Would you like to select a different message?"):
+                        continue
+                    else:
+                        click.echo("Exiting without committing.")
+                        return
+        
+        # Non-interactive mode (original behavior)
+        else:
+            click.echo(f"\nGenerated {len(suggestions)} {message_type} suggestion(s):\n")
+            
+            for i, message in enumerate(suggestions):
+                click.secho(f"[{i+1}] ", fg='blue', nl=False)
+                click.echo("=" * 60)
+                click.echo(message)
+                click.echo("=" * 60)
+                click.echo("")
+            
+            # Provide usage instructions
+            if detailed:
+                click.echo("To use a detailed suggestion:")
+                click.echo('git commit -m "Header from above" -m "Body from above"')
+                click.echo("Or simply: git commit (then paste the full message in your editor)")
+            else:
+                click.echo("To use a suggestion: git commit -m \"suggested message\"")
+            
+            click.echo("\nTip: Use --interactive (-i) to select and commit directly!")
+            return
 
 @cli.command()
 @click.option('--temp', '-t', default=0.7, help='Temperature (creativity) of suggestions, 0.0-1.0')
@@ -593,6 +778,53 @@ def commit(temp):
         click.echo(f'git commit -m "{header}"')
     
     click.echo("=" * 70)
+
+@cli.command()
+@click.option('--temp', '-t', default=0.7, help='Temperature (creativity) of suggestions, 0.0-1.0')
+@click.option('--detailed', '-d', is_flag=True, help='Generate detailed commit with header and body')
+def quick(temp, detailed):
+    """
+    Quick commit: Generate one suggestion and commit immediately if approved.
+    
+    This is equivalent to: commit-assistant suggest --auto-commit
+    """
+    # Validate input
+    temp = max(0.0, min(1.0, temp))
+    
+    click.echo("Generating commit suggestion...")
+    
+    # Generate one suggestion
+    if detailed:
+        suggestions = suggest_detailed_commit_message(count=1, temperature=temp)
+    else:
+        suggestions = suggest_commit_message(count=1, temperature=temp)
+    
+    # Check for errors
+    if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
+        click.secho(suggestions[0], fg='yellow')
+        return
+    
+    message = suggestions[0]
+    
+    # Display the suggestion
+    click.echo(f"\nSuggested commit message:")
+    click.echo("=" * 60)
+    click.echo(message)
+    click.echo("=" * 60)
+    
+    # Confirm and commit
+    if click.confirm("\nCommit with this message?", default=True):
+        success = execute_git_commit(message, detailed)
+        if not success:
+            click.echo("\nYou can manually commit with:")
+            if detailed and '\n\n' in message:
+                parts = message.split('\n\n', 1)
+                click.echo(f'git commit -m "{parts[0]}" -m "{parts[1]}"')
+            else:
+                click.echo(f'git commit -m "{message}"')
+    else:
+        click.echo("Commit cancelled.")
+        click.echo("\nTry: commit-assistant suggest --interactive")
 
 @cli.command()
 def setup():
