@@ -8,7 +8,7 @@ setup(
     name="commit-assistant",
     version="0.1.0",
     author="Jazir Hameed",
-    author_email="",
+    author_email="jazirsha@gmail.com",
     description="AI-powered Git commit message generator",
     long_description=long_description,
     long_description_content_type="text/markdown",
