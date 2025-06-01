@@ -394,9 +394,9 @@ MIT License - see LICENSE file for details.
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/commit-assistant/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/commit-assistant/discussions)
-- **Email**: your.email@example.com
+- **Issues**: [GitHub Issues](https://github.com/jazir/commit-assistant/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/jazir/commit-assistant/discussions)
+- **Email**: jazirsha@gmail.com
 
 ---
 
