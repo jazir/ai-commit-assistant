@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "commit-assistant"
+description = "AI-powered Git commit message generator with smart hook integration"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+maintainers = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+keywords = ["git", "commit", "ai", "automation", "openai", "developer-tools", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Version Control :: Git",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "openai>=1.0.0",
+    "gitpython>=3.1.30",
+    "click>=8.1.3",
+    "python-dotenv>=1.0.0",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/commit-assistant"
+Repository = "https://github.com/yourusername/commit-assistant.git"
+Documentation = "https://github.com/yourusername/commit-assistant#readme"
+"Bug Reports" = "https://github.com/yourusername/commit-assistant/issues"
+Changelog = "https://github.com/yourusername/commit-assistant/releases"
+
+[project.scripts]
+commit-assistant = "commitassist.main:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "black>=21.0",
+    "flake8>=3.8",
+    "mypy>=0.800",
+]
+
+[tool.setuptools]
+packages = ["commitassist"]
+
+[tool.setuptools.package-data]
+commitassist = ["*.md", "*.txt"]
+
+[tool.black]
+line-length = 88
+target-version = ['py37']
+
+[tool.mypy]
+python_version = "3.7"
+warn_return_any = true
+warn_unused_configs = true
