@@ -1,12 +1,15 @@
 import os
-import subprocess
 import sys
 import git
 import platform
+import subprocess
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 import click
+
+# Import hook functions from the hooks module
+from . import hooks
 
 # Load environment variables from a .env file if present
 # This allows users to store their API keys securely
@@ -284,6 +287,7 @@ def generate_commit_message(diff, files, temperature=0.7):
         # Return error message if API call fails
         return f"Error generating commit message: {str(e)}"
 
+
 def generate_detailed_commit_message(diff, files, temperature=0.7):
     """
     Generate a detailed commit message with header and body using OpenAI's API.
@@ -399,6 +403,38 @@ def generate_detailed_commit_message(diff, files, temperature=0.7):
         return f"Error generating detailed commit message: {str(e)}"
 
 
+def suggest_commit_message(count=1, temperature=0.7):
+    """
+    Main function to suggest a commit message.
+    
+    Args:
+        count (int): Number of suggestions to generate
+        temperature (float): Controls randomness in AI response
+        
+    Returns:
+        list: List of suggested messages or list with single error message
+    """
+    # Get the git diff
+    diff, files_or_error = get_git_diff()
+    
+    # If no diff is available, files_or_error will be an error message string
+    if not diff:
+        return [files_or_error]  # Return error message as single item in list
+    
+    # If we reach here, files_or_error contains the list of files
+    file_list = files_or_error
+    
+    # Generate the requested number of suggestions
+    suggestions = []
+    for i in range(count):
+        # Vary temperature slightly for more diverse suggestions
+        temp = temperature + (i * 0.05)
+        message = generate_commit_message(diff, file_list, temperature=min(temp, 1.0))
+        suggestions.append(message)  # message should be a string
+        
+    return suggestions
+
+
 def suggest_detailed_commit_message(count=1, temperature=0.7):
     """
     Generate detailed commit messages with header and body.
@@ -430,37 +466,6 @@ def suggest_detailed_commit_message(count=1, temperature=0.7):
         
     return suggestions
 
-
-def suggest_commit_message(count=1, temperature=0.7):
-    """
-    Main function to suggest a commit message.
-    
-    Args:
-        count (int): Number of suggestions to generate
-        temperature (float): Controls randomness in AI response
-        
-    Returns:
-        list: List of suggested messages or list with single error message
-    """
-    # Get the git diff
-    diff, files_or_error = get_git_diff()
-    
-    # If no diff is available, files_or_error will be an error message string
-    if not diff:
-        return [files_or_error]  # Return error message as single item in list
-    
-    # If we reach here, files_or_error contains the list of files
-    file_list = files_or_error
-    
-    # Generate the requested number of suggestions
-    suggestions = []
-    for i in range(count):
-        # Vary temperature slightly for more diverse suggestions
-        temp = temperature + (i * 0.05)
-        message = generate_commit_message(diff, file_list, temperature=min(temp, 1.0))
-        suggestions.append(message)  # message should be a string
-        
-    return suggestions
 
 def execute_git_commit(message, is_detailed=False):
     """
@@ -573,7 +578,9 @@ def get_user_selection(suggestions, message_type="commit message"):
         except ValueError:
             click.secho("Invalid input. Please enter a number, 'c', 'r', or 'q'.", fg='yellow')
 
-# Define the CLI commands using Click
+
+# CLI Commands
+
 @click.group()
 def cli():
     """
@@ -726,58 +733,6 @@ def suggest(count, temp, detailed, interactive, auto_commit):
             click.echo("\nTip: Use --interactive (-i) to select and commit directly!")
             return
 
-@cli.command()
-@click.option('--temp', '-t', default=0.7, help='Temperature (creativity) of suggestions, 0.0-1.0')
-def commit(temp):
-    """
-    Generate a detailed commit message and format it for easy copying.
-    
-    This command generates a single detailed commit message optimized for copy-paste.
-    """
-    temp = max(0.0, min(1.0, temp))
-    
-    click.echo("Generating detailed commit message...")
-    
-    suggestions = suggest_detailed_commit_message(count=1, temperature=temp)
-    
-    if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
-        click.secho(suggestions[0], fg='yellow')
-        return
-    
-    message = suggestions[0]
-    
-    # Split into header and body for formatted output
-    lines = message.split('\n')
-    header = lines[0] if lines else ""
-    body = '\n'.join(lines[2:]) if len(lines) > 2 else ""  # Skip header and blank line
-    
-    click.echo("\n" + "=" * 70)
-    click.secho("COMMIT MESSAGE", fg='green', bold=True)
-    click.echo("=" * 70)
-    click.echo(message)
-    click.echo("=" * 70)
-    
-    click.echo("\n" + "=" * 70)
-    click.secho("COPY-PASTE COMMANDS", fg='blue', bold=True)
-    click.echo("=" * 70)
-    
-    if body:
-        click.echo("Option 1 - Using multiple -m flags:")
-        click.echo(f'git commit -m "{header}" -m "{body.replace(chr(10), chr(10))}"')
-        
-        click.echo("\nOption 2 - Using editor (recommended):")
-        click.echo("git commit")
-        click.echo("(Then paste the full message above in your editor)")
-        
-        click.echo("\nOption 3 - PowerShell multi-line:")
-        click.echo('git commit -m @"')
-        click.echo(message)
-        click.echo('"@')
-    else:
-        click.echo("Single line commit:")
-        click.echo(f'git commit -m "{header}"')
-    
-    click.echo("=" * 70)
 
 @cli.command()
 @click.option('--temp', '-t', default=0.7, help='Temperature (creativity) of suggestions, 0.0-1.0')
@@ -824,7 +779,8 @@ def quick(temp, detailed):
                 click.echo(f'git commit -m "{message}"')
     else:
         click.echo("Commit cancelled.")
-        click.echo("\nTry: commit-assistant suggest --interactive")
+        click.echo("\nTry: python -m commitassist.main suggest --interactive")
+
 
 @cli.command()
 def setup():
@@ -858,110 +814,263 @@ def setup():
     click.echo(f"Configuration file: {env_path}")
 
 
+# Hook-related CLI commands using the hooks module
+
 @cli.command()
 def install_hook():
     """
     Install Commit Assistant as a Git hook.
     
-    Sets up a prepare-commit-msg hook to suggest messages automatically.
+    Sets up a prepare-commit-msg hook to suggest messages automatically
+    when you run 'git commit' (without -m flag).
     """
-    try:
-        # Open the current directory as a Git repository
-        repo = git.Repo(".")
-        
-        # Path to Git hooks directory
-        hooks_dir = os.path.join(repo.git_dir, 'hooks')
-        
-        # Make sure hooks directory exists
-        os.makedirs(hooks_dir, exist_ok=True)
-        
-        # Path to prepare-commit-msg hook
-        hook_path = os.path.join(hooks_dir, 'prepare-commit-msg')
-        
-        # Check if hook already exists
-        if os.path.exists(hook_path):
-            overwrite = click.confirm("Git hook already exists. Overwrite?", default=False)
-            if not overwrite:
-                click.echo("Hook installation canceled.")
-                return
-        
-        # Create hook content with platform-specific considerations
-        is_windows = platform.system() == "Windows"
-        
-        if is_windows:
-            # Windows needs a batch file wrapper
-            hook_content = """#!/bin/sh
-# Git hook to suggest commit messages
-# Generated by commit-assistant
-
-# Only run if no commit message is provided (not from merge, template, etc.)
-if [ -z "$2" ]; then
-    # Get the suggested message
-    SUGGESTED=$(commit-assistant suggest --count 1)
+    click.echo("Installing Git hook...")
     
-    # Extract just the message (skipping the headers)
-    MESSAGE=$(echo "$SUGGESTED" | grep -A 1 "\\[1\\]" | tail -n 1)
+    success, message = hooks.install_git_hook()
     
-    # Add the suggestion as a comment in the commit message file
-    echo "# Suggested message: $MESSAGE" >> "$1"
-    echo "#" >> "$1"
-    echo "# Delete the '#' at the beginning of the line to use the suggested message" >> "$1"
-    echo "#" >> "$1"
-fi
-"""
+    if success:
+        click.secho("✓ " + message, fg='green')
+        click.echo("\nThe hook is now installed! Here's how it works:")
+        click.echo("1. Stage your changes: git add .")
+        click.echo("2. Start a commit: git commit")
+        click.echo("3. Your editor will open with an AI-suggested message")
+        click.echo("4. Edit or accept the suggestion and save")
+        
+        # Check for Windows-specific notes
+        if platform.system() == "Windows":
+            click.echo("\n" + "="*50)
+            click.secho("Windows Users Note:", fg='yellow', bold=True)
+            click.echo("Make sure Git is configured to use the correct shell:")
+            click.echo("  git config --global core.autocrlf true")
+            click.echo("The hook will work with Git Bash, Git for Windows, and most Git clients.")
+            click.echo("="*50)
+            
+    else:
+        if "already exists" in message:
+            click.secho("⚠ " + message, fg='yellow')
+            click.echo("\nTo reinstall, first remove the existing hook:")
+            click.echo("  python -m commitassist.main uninstall-hook")
+            click.echo("Then install again:")
+            click.echo("  python -m commitassist.main install-hook")
         else:
-            # Unix/Linux/Mac version
-            hook_content = """#!/bin/sh
-# Git hook to suggest commit messages
-# Generated by commit-assistant
+            click.secho("✗ " + message, fg='red')
 
-# Only run if no commit message is provided (not from merge, template, etc.)
-if [ -z "$2" ]; then
-    # Get the suggested message
-    SUGGESTED=$(commit-assistant suggest --count 1)
+
+@cli.command()
+def uninstall_hook():
+    """
+    Remove the Commit Assistant Git hook.
     
-    # Extract just the message (skipping the headers)
-    MESSAGE=$(echo "$SUGGESTED" | grep -A 1 "\\[1\\]" | tail -n 1)
+    Removes the prepare-commit-msg hook installed by this tool.
+    """
+    click.echo("Removing Git hook...")
     
-    # Add the suggestion as a comment in the commit message file
-    echo "# Suggested message: $MESSAGE" >> "$1"
-    echo "#" >> "$1"
-    echo "# Delete the '#' at the beginning of the line to use the suggested message" >> "$1"
-    echo "#" >> "$1"
-fi
-"""
+    success, message = hooks.uninstall_git_hook()
+    
+    if success:
+        click.secho("✓ " + message, fg='green')
+        click.echo("Git hook has been removed. You can reinstall it anytime with:")
+        click.echo("  python -m commitassist.main install-hook")
+    else:
+        if "not found" in message:
+            click.secho("ℹ " + message, fg='blue')
+        else:
+            click.secho("✗ " + message, fg='red')
+
+
+@cli.command()
+def install_global_hook():
+    """
+    Install Commit Assistant as a global Git hook for ALL repositories.
+    
+    This sets up the hook to work in every Git repository on your system.
+    You only need to run this once, not per repository.
+    """
+    click.echo("Installing global Git hook...")
+    
+    success, message = hooks.install_global_git_hook()
+    
+    if success:
+        click.secho("✓ " + message, fg='green')
+        click.echo("\n🎉 Global hook installed successfully!")
+        click.echo("\nThis hook will now work in ALL your Git repositories!")
+        click.echo("\nHow it works:")
+        click.echo("1. Go to any Git repository")
+        click.echo("2. Stage changes: git add .")
+        click.echo("3. Start commit: git commit")
+        click.echo("4. See AI suggestions in your editor")
         
-        # Convert Windows line endings to Unix
-        hook_content = hook_content.replace('\r\n', '\n')
+        click.echo(f"\n📍 Hook location: {message.split(': ')[1]}")
         
-        # Write the hook file
-        with open(hook_path, 'w', newline='\n') as f:
-            f.write(hook_content)
-        
-        # Make the hook executable
-        try:
-            # On Unix systems, make the hook executable
-            os.chmod(hook_path, 0o755)
-        except:
-            # On Windows, this may fail but hooks will still run
-            pass
+        if platform.system() == "Windows":
+            click.echo("\n" + "="*50)
+            click.secho("Windows Users:", fg='yellow', bold=True)
+            click.echo("Global hooks work with Git for Windows and most Git clients.")
+            click.echo("="*50)
             
-        click.secho("Git hook installed successfully!", fg='green')
-        click.echo(f"Hook location: {hook_path}")
+    else:
+        click.secho("✗ " + message, fg='red')
+
+
+@cli.command()
+def uninstall_global_hook():
+    """
+    Remove the global Git hook configuration.
+    
+    This removes the global hook setup, but won't affect individual
+    repository hooks that were installed separately.
+    """
+    click.echo("Removing global Git hook...")
+    
+    success, message = hooks.uninstall_global_git_hook()
+    
+    if success:
+        click.secho("✓ " + message, fg='green')
+        click.echo("\nGlobal hook removed. You can:")
+        click.echo("1. Reinstall globally: python -m commitassist.main install-global-hook")
+        click.echo("2. Install per-repo: python -m commitassist.main install-hook")
+    else:
+        click.secho("✗ " + message, fg='red')
+
+
+@cli.command()
+def hook_status():
+    """
+    Check the status of Git hook installation (both local and global).
+    """
+    click.echo("Git Hook Status Report:")
+    click.echo("=" * 60)
+    
+    # Check local hook status
+    click.secho("LOCAL REPOSITORY HOOK:", fg='blue', bold=True)
+    local_status = hooks.check_git_hook_status()
+    
+    if not local_status['git_repo']:
+        click.secho("✗ Not in a Git repository", fg='red')
+    elif local_status['hook_exists'] and local_status['is_our_hook']:
+        click.secho("✓ Local hook installed", fg='green')
+        click.echo(f"Location: {local_status['hook_path']}")
+    else:
+        click.secho("✗ No local hook", fg='red')
+    
+    click.echo()
+    
+    # Check global hook status
+    click.secho("GLOBAL HOOK (works in all repos):", fg='blue', bold=True)
+    global_status = hooks.check_global_hook_status()
+    
+    if global_status['global_hooks_configured'] and global_status['is_our_hook']:
+        click.secho("✓ Global hook installed and active", fg='green')
+        click.echo("✨ Works in ALL Git repositories!")
+        click.echo(f"Location: {global_status['hook_path']}")
+    else:
+        click.secho("✗ No global hook", fg='red')
+    
+    click.echo("=" * 60)
+    
+    # Recommendations
+    click.secho("RECOMMENDATIONS:", fg='yellow', bold=True)
+    
+    if global_status['global_hooks_configured'] and global_status['is_our_hook']:
+        click.echo("✅ You're all set! Global hook works everywhere.")
+    else:
+        click.echo("💡 Install global hook for convenience:")
+        click.echo("   python -m commitassist.main install-global-hook")
+        click.echo("   (Works in all repositories, setup once)")
+    
+    click.echo()
+    click.echo("Alternative commands:")
+    click.echo("• Local hook:  python -m commitassist.main install-hook")
+    click.echo("• Global hook: python -m commitassist.main install-global-hook")
+
+
+@cli.command()
+def global_hook_status():
+    """
+    Check the status of global Git hook installation.
+    """
+    status = hooks.check_global_hook_status()
+    
+    click.echo("Global Git Hook Status:")
+    click.echo("=" * 50)
+    
+    if status.get('error'):
+        click.secho(f"✗ Error checking status: {status['error']}", fg='red')
+        return
+    
+    if status['global_hooks_configured']:
+        click.secho("✓ Global Git hooks are configured", fg='green')
+        click.echo(f"Hooks path: {status['global_hooks_path']}")
         
-        # Check if the hook will actually execute
-        if is_windows:
-            click.secho("\nNote for Windows users:", fg='yellow')
-            click.echo("Make sure Git is configured to use Git Bash for hooks:")
-            click.echo("  git config --global core.hookspath .git/hooks")
-            
-    except git.exc.InvalidGitRepositoryError:
-        click.secho("Error: Current directory is not a Git repository.", fg='red')
-    except Exception as e:
-        click.secho(f"Error installing Git hook: {str(e)}", fg='red')
+        if status['hook_exists'] and status['is_our_hook']:
+            click.secho("✓ Commit Assistant global hook is active", fg='green')
+            click.echo(f"Hook file: {status['hook_path']}")
+            click.echo("\n✨ The hook will work in ALL your Git repositories!")
+        elif status['hook_exists']:
+            click.secho("⚠ A global hook exists but wasn't created by commit-assistant", fg='yellow')
+        else:
+            click.secho("✗ Global hook file missing", fg='red')
+            click.echo("Try reinstalling: python -m commitassist.main install-global-hook")
+    else:
+        click.secho("✗ Global Git hooks not configured", fg='red')
+        click.echo("Install with: python -m commitassist.main install-global-hook")
+    
+    click.echo("=" * 50)
+
+
+@cli.command()
+def commit():
+    """
+    Generate a detailed commit message and format it for easy copying.
+    
+    This command generates a single detailed commit message optimized for copy-paste.
+    """
+    temp = 0.7
+    
+    click.echo("Generating detailed commit message...")
+    
+    suggestions = suggest_detailed_commit_message(count=1, temperature=temp)
+    
+    if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
+        click.secho(suggestions[0], fg='yellow')
+        return
+    
+    message = suggestions[0]
+    
+    # Split into header and body for formatted output
+    lines = message.split('\n')
+    header = lines[0] if lines else ""
+    body = '\n'.join(lines[2:]) if len(lines) > 2 else ""  # Skip header and blank line
+    
+    click.echo("\n" + "=" * 70)
+    click.secho("COMMIT MESSAGE", fg='green', bold=True)
+    click.echo("=" * 70)
+    click.echo(message)
+    click.echo("=" * 70)
+    
+    click.echo("\n" + "=" * 70)
+    click.secho("COPY-PASTE COMMANDS", fg='blue', bold=True)
+    click.echo("=" * 70)
+    
+    if body:
+        click.echo("Option 1 - Using multiple -m flags:")
+        click.echo(f'git commit -m "{header}" -m "{body.replace(chr(10), chr(10))}"')
+        
+        click.echo("\nOption 2 - Using editor (recommended):")
+        click.echo("git commit")
+        click.echo("(Then paste the full message above in your editor)")
+        
+        click.echo("\nOption 3 - PowerShell multi-line:")
+        click.echo('git commit -m @"')
+        click.echo(message)
+        click.echo('"@')
+    else:
+        click.echo("Single line commit:")
+        click.echo(f'git commit -m "{header}"')
+    
+    click.echo("=" * 70)
 
 
 # Entry point for the command-line interface
 if __name__ == "__main__":
     cli()
-
