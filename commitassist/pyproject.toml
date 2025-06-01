@@ -9,10 +9,10 @@ readme = "README.md"
 requires-python = ">=3.7"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"},
+    {name = "Jazir Hameed", email = "jazirsha@gmail.com"},
 ]
 maintainers = [
-    {name = "Your Name", email = "your.email@example.com"},
+    {name = "Jazir Hameed", email = "jazirsha@gmail.com"},
 ]
 keywords = ["git", "commit", "ai", "automation", "openai", "developer-tools", "cli"]
 classifiers = [
@@ -38,11 +38,11 @@ dependencies = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/commit-assistant"
-Repository = "https://github.com/yourusername/commit-assistant.git"
-Documentation = "https://github.com/yourusername/commit-assistant#readme"
-"Bug Reports" = "https://github.com/yourusername/commit-assistant/issues"
-Changelog = "https://github.com/yourusername/commit-assistant/releases"
+Homepage = "https://github.com/jazir/commit-assistant"
+Repository = "https://github.com/jazir/commit-assistant.git"
+Documentation = "https://github.com/jazir/commit-assistant#readme"
+"Bug Reports" = "https://github.com/jazir/commit-assistant/issues"
+Changelog = "https://github.com/jazir/commit-assistant/releases"
 
 [project.scripts]
 commit-assistant = "commitassist.main:cli"
