@@ -365,11 +365,11 @@ def suggest(count, temp):
     suggestions = suggest_commit_message(count=count, temperature=temp)
     
     # Debug: Print what we got
-    print(f"DEBUG: suggestions type: {type(suggestions)}")
-    print(f"DEBUG: suggestions content: {suggestions}")
-    if suggestions:
-        print(f"DEBUG: first suggestion type: {type(suggestions[0])}")
-        print(f"DEBUG: first suggestion content: {suggestions[0]}")
+    # print(f"DEBUG: suggestions type: {type(suggestions)}")
+    # print(f"DEBUG: suggestions content: {suggestions}")
+    # if suggestions:
+        # print(f"DEBUG: first suggestion type: {type(suggestions[0])}")
+        # print(f"DEBUG: first suggestion content: {suggestions[0]}")
     
     # Check if we got an error or warning message
     if len(suggestions) == 1 and isinstance(suggestions[0], str) and (suggestions[0].startswith("Error") or suggestions[0].startswith("No ")):
