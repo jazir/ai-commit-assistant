@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup configuration for Commit Assistant
+Setup configuration for AI Commit Assistant
 """
 
 from setuptools import setup, find_packages
@@ -13,17 +13,17 @@ def read_readme():
         with open(readme_path, "r", encoding="utf-8") as fh:
             return fh.read()
     except (FileNotFoundError, UnicodeDecodeError):
-        return "AI-powered Git commit message generator"
+        return "AI-powered Git commit message generator with smart hook integration"
 
 setup(
-    name="commit-assistant",
+    name="ai-commit-assistant",
     version="1.0.0",
     author="Jazir Hameed",
     author_email="jazirsha@gmail.com",
     description="AI-powered Git commit message generator with smart hook integration",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
-    url="https://github.com/jazir/commit-assistant",
+    url="https://github.com/jazir/ai-commit-assistant",
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
@@ -50,7 +50,7 @@ setup(
     keywords="git, commit, ai, automation, openai, developer-tools, cli",
     entry_points={
         "console_scripts": [
-            "commit-assistant=commitassist.main:cli",
+            "ai-commit-assistant=commitassist.main:cli",
         ],
     },
 )
