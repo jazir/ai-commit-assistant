@@ -51,9 +51,9 @@ def get_git_diff():
         for item in staged_files:
             changed_files.append(item.a_path or item.b_path)
             # DEBUG: Print what files we detected
-            print(f"DEBUG: Staged files detected: {changed_files}")
-            print(f"DEBUG: Diff length: {len(diff)} characters")
-            print(f"DEBUG: First 200 chars of diff: {diff[:200]}")
+            # print(f"DEBUG: Staged files detected: {changed_files}")
+            # print(f"DEBUG: Diff length: {len(diff)} characters")
+            # print(f"DEBUG: First 200 chars of diff: {diff[:200]}")
             
         # Also check for new files that are staged
         try:

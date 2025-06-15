@@ -7,12 +7,14 @@ Never struggle with commit messages again! AI Commit Assistant uses OpenAI's GPT
 ## ✨ Features
 
 - **Smart Commit Messages**: AI analyzes your git diff and generates contextual commit messages
-- **Multiple Suggestions**: Get several commit message options to choose from
+- **Interactive Mode**: Select from multiple suggestions and commit directly with confirmation
+- **Multiple Suggestions**: Get several commit message options to choose from (1-10 suggestions)
+- **Flexible Workflow**: Copy to clipboard, regenerate suggestions, or commit directly
 - **Detailed Mode**: Generate detailed commit messages with body and breaking changes
 - **Git Hook Integration**: Automatically suggest commit messages during `git commit`
 - **Conventional Commits**: Follows conventional commit format (feat, fix, docs, etc.)
-- **Customizable**: Configure AI model, temperature, and message style
 - **Easy Setup**: Simple CLI setup and configuration
+- **Smart Options**: Copy, regenerate, or quit without committing
 
 ## 🚀 Installation
 
@@ -42,14 +44,14 @@ pip install ai-commit-assistant
 
    This will prompt you to enter your OpenAI API key securely.
 
-3. **Start using it**:
+3. **Start using it with interactive mode** (recommended):
 
    ```bash
    # Make some changes to your code
    git add .
 
-   # Get AI-generated commit suggestions
-   ai-commit-assistant suggest
+   # Get AI-generated commit suggestions with interactive selection
+   ai-commit-assistant suggest --count 3 --interactive
    ```
 
 ## 🎯 Usage
@@ -57,7 +59,7 @@ pip install ai-commit-assistant
 ### Basic Commands
 
 ```bash
-# Get commit message suggestions
+# Get a single commit message suggestion
 ai-commit-assistant suggest
 
 # Get detailed commit messages with body
@@ -65,6 +67,9 @@ ai-commit-assistant suggest --detailed
 
 # Get multiple suggestions to choose from
 ai-commit-assistant suggest --count 3
+
+# Interactive mode - select and commit directly
+ai-commit-assistant suggest --count 3 --interactive
 
 # Install smart Git hook (auto-suggests during git commit)
 ai-commit-assistant install-hook
@@ -109,46 +114,67 @@ ai-commit-assistant --help
 ```bash
 $ ai-commit-assistant suggest
 
-🤖 AI Commit Suggestions:
-1. feat: add user authentication system
-2. feat: implement login and signup functionality
-3. feat: add JWT-based authentication
-
-Choose a suggestion (1-3) or press Enter to copy #1: 1
-✅ Copied to clipboard: feat: add user authentication system
+Generated commit message: feat: add user authentication system
 ```
 
-### Detailed Mode
+### Multiple Suggestions
 
 ```bash
-$ ai-commit-assistant suggest --detailed
+$ ai-commit-assistant suggest --count 3
 
-🤖 Detailed Commit Suggestion:
-
+Generated 3 commit message suggestion(s):
+[1] ============================================================
 feat: add user authentication system
+Implement JWT-based authentication with login and signup
+============================================================
+[2] ============================================================
+feat: implement user login functionality
+Add secure authentication system with JWT tokens
+============================================================
+[3] ============================================================
+feat: create authentication and authorization
+Add user management with secure login system
+============================================================
 
-- Implement JWT-based authentication
-- Add login and signup endpoints
-- Create user model and database schema
-- Add password hashing and validation
-- Include authentication middleware
-
-BREAKING CHANGE: Authentication now required for protected routes
+To use a suggestion: git commit -m "suggested message"
+Tip: Use --interactive (-i) to select and commit directly!
 ```
 
-### Multiple Options
+### Interactive Mode (Recommended)
 
 ```bash
-$ ai-commit-assistant suggest --count 5
+$ ai-commit-assistant suggest --count 3 --interactive
 
-🤖 AI Commit Suggestions:
-1. feat: add user authentication system
-2. feat: implement JWT-based login functionality
-3. feat: create user authentication and authorization
-4. feat: add secure user login and registration
-5. feat: implement authentication with JWT tokens
+Generated 3 commit message suggestion(s):
+[1] ============================================================
+feat: add user authentication system
+Implement JWT-based authentication with login and signup
+============================================================
+[2] ============================================================
+feat: implement user login functionality
+Add secure authentication system with JWT tokens
+============================================================
+[3] ============================================================
+feat: create authentication and authorization
+Add user management with secure login system
+============================================================
 
-Choose a suggestion (1-5) or press Enter to copy #1:
+Options:
+  1-3: Select a suggestion to commit
+  c: Copy a suggestion to clipboard (if available)
+  r: Regenerate suggestions
+  q: Quit without committing
+What would you like to do?: 2
+
+Selected message:
+============================================================
+feat: implement user login functionality
+Add secure authentication system with JWT tokens
+============================================================
+Commit with this message? [Y/n]: y
+✓ Commit successful!
+[main a1b2c3d] feat: implement user login functionality
+ 5 files changed, 127 insertions(+), 23 deletions(-)
 ```
 
 ## 🔧 Advanced Configuration
