@@ -24,6 +24,8 @@ wheels/
 venv/
 env/
 ENV/
+.venv/
+.env/
 
 # IDE
 .vscode/
@@ -42,3 +44,6 @@ Thumbs.db
 # Package building
 *.tar.gz
 *.whl
+
+# Logs
+*.log
