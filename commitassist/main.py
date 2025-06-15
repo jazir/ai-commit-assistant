@@ -16,7 +16,27 @@ from . import hooks
 load_dotenv()
 
 # Initialize the OpenAI client with the API key from environment variables
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def get_openai_client():
+    """
+    Get OpenAI client with lazy initialization and API key validation.
+    
+    Returns:
+        OpenAI: Configured OpenAI client
+        
+    Raises:
+        SystemExit: If API key is not found
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        click.echo("OpenAI API key not found.", err=True)
+        click.echo("Please set the OPENAI_API_KEY environment variable or run 'ai-commit-assistant setup'", err=True)
+        click.echo("You can get an API key from https://platform.openai.com/api-keys", err=True)
+        sys.exit(1)
+    
+    return OpenAI(api_key=api_key)
+
 
 def get_git_diff():
     """
@@ -274,6 +294,9 @@ def generate_commit_message(diff, files, temperature=0.7):
     
     # Call the OpenAI API to generate a commit message
     try:
+        # Get client with lazy initialization
+        client = get_openai_client()
+        
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",  # Can be changed to gpt-4 for better results
             messages=[
@@ -402,6 +425,9 @@ def generate_detailed_commit_message(diff, files, temperature=0.7):
     
     # Call the OpenAI API to generate a detailed commit message
     try:
+        # Get client with lazy initialization
+        client = get_openai_client()
+        
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -614,27 +640,28 @@ def cli():
     
     This tool analyzes your staged changes and suggests meaningful commit messages.
     """
-    # Check if OpenAI API key is available
-    if not os.getenv("OPENAI_API_KEY"):
-        # Path to .env file in the same directory as the script
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        env_path = os.path.join(script_dir, '.env')
+    pass
+    # # Check if OpenAI API key is available
+    # if not os.getenv("OPENAI_API_KEY"):
+    #     # Path to .env file in the same directory as the script
+    #     script_dir = os.path.dirname(os.path.abspath(__file__))
+    #     env_path = os.path.join(script_dir, '.env')
         
-        # Also check user's home directory
-        home_env_path = os.path.join(os.path.expanduser("~"), '.commit-assistant', '.env')
+    #     # Also check user's home directory
+    #     home_env_path = os.path.join(os.path.expanduser("~"), '.commit-assistant', '.env')
         
-        if os.path.exists(env_path):
-            # Load from script directory
-            load_dotenv(env_path)
-        elif os.path.exists(home_env_path):
-            # Load from user's home directory
-            load_dotenv(home_env_path)
+    #     if os.path.exists(env_path):
+    #         # Load from script directory
+    #         load_dotenv(env_path)
+    #     elif os.path.exists(home_env_path):
+    #         # Load from user's home directory
+    #         load_dotenv(home_env_path)
             
-        # Final check if key is loaded
-        if not os.getenv("OPENAI_API_KEY"):
-            click.echo("Error: OpenAI API key not found. Please set the OPENAI_API_KEY environment variable or create a .env file.")
-            click.echo("You can get an API key from https://platform.openai.com/api-keys")
-            sys.exit(1)
+    #     # Final check if key is loaded
+    #     if not os.getenv("OPENAI_API_KEY"):
+    #         click.echo("Error: OpenAI API key not found. Please set the OPENAI_API_KEY environment variable or create a .env file.")
+    #         click.echo("You can get an API key from https://platform.openai.com/api-keys")
+    #         sys.exit(1)
 
 
 @cli.command()

@@ -17,7 +17,7 @@ def read_readme():
 
 setup(
     name="ai-commit-assistant",
-    version="1.0.0",
+    version="1.0.1",
     author="Jazir Hameed",
     author_email="jazirsha@gmail.com",
     description="AI-powered Git commit message generator with smart hook integration",
