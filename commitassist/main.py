@@ -7,6 +7,8 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 import click
+import time
+import random
 
 # Import hook functions from the hooks module
 from . import hooks
@@ -28,14 +30,20 @@ def get_openai_client():
     Raises:
         SystemExit: If API key is not found
     """
+    # Try to load environment variables again in case they were set after import
+    home_env_path = os.path.join(os.path.expanduser("~"), '.commit-assistant', '.env')
+    if os.path.exists(home_env_path):
+        load_dotenv(home_env_path, override=True)
+    
     api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    if not api_key or not api_key.strip():
         click.echo("OpenAI API key not found.", err=True)
-        click.echo("Please set the OPENAI_API_KEY environment variable or run 'ai-commit-assistant setup'", err=True)
-        click.echo("You can get an API key from https://platform.openai.com/api-keys", err=True)
+        click.echo("Please run: ai-commit-assistant setup", err=True)
+        click.echo("Or set environment variable: OPENAI_API_KEY=your_key", err=True)
+        click.echo("Get your API key from: https://platform.openai.com/api-keys", err=True)
         sys.exit(1)
     
-    return OpenAI(api_key=api_key)
+    return OpenAI(api_key=api_key.strip())
 
 
 def get_git_diff():
@@ -214,14 +222,15 @@ def get_repo_context(files, max_commits=5):
         }
 
 
-def generate_commit_message(diff, files, temperature=0.7):
+def generate_commit_message(diff, files, temperature=0.7, max_retries=3):
     """
-    Generate a commit message using OpenAI's API.
+    Generate a commit message using OpenAI's API with retry logic.
     
     Args:
         diff (str): The git diff text
         files (list): List of changed files
         temperature (float): Controls randomness in AI response (0.0-1.0)
+        max_retries (int): Maximum number of retry attempts
         
     Returns:
         str: Generated commit message or error message
@@ -292,48 +301,93 @@ def generate_commit_message(diff, files, temperature=0.7):
     Generate a clean commit message without any commit hashes, issue numbers, or metadata.
     """
     
-    # Call the OpenAI API to generate a commit message
-    try:
-        # Get client with lazy initialization
-        client = get_openai_client()
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Can be changed to gpt-4 for better results
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=temperature,  # Controls randomness (0.0 = deterministic, 1.0 = creative)
-            max_tokens=100,  # Limit response length
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0
-        )
-        
-        # Extract the message from the response
-        commit_message = response.choices[0].message.content.strip()
-        
-        # Clean up the message - remove any remaining hashes or unwanted patterns
-        # Remove patterns like (abc1234) or [abc1234] or #abc1234
-        import re
-        commit_message = re.sub(r'\s*[\(\[]?[a-f0-9]{6,8}[\)\]]?\s*$', '', commit_message)
-        commit_message = re.sub(r'\s*#[a-f0-9]{6,8}\s*', '', commit_message)
-        
-        return commit_message.strip()
-        
-    except Exception as e:
-        # Return error message if API call fails
-        return f"Error generating commit message: {str(e)}"
+    # Retry loop for API calls
+    for attempt in range(max_retries):
+        try:
+            # Get client with lazy initialization
+            client = get_openai_client()
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",  # Can be changed to gpt-4 for better results
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=temperature,  # Controls randomness (0.0 = deterministic, 1.0 = creative)
+                max_tokens=100,  # Limit response length
+                top_p=1,
+                frequency_penalty=0,
+                presence_penalty=0
+            )
+            
+            # Extract the message from the response
+            commit_message = response.choices[0].message.content.strip()
+            
+            # Clean up the message - remove any remaining hashes or unwanted patterns
+            # Remove patterns like (abc1234) or [abc1234] or #abc1234
+            import re
+            commit_message = re.sub(r'\s*[\(\[]?[a-f0-9]{6,8}[\)\]]?\s*$', '', commit_message)
+            commit_message = re.sub(r'\s*#[a-f0-9]{6,8}\s*', '', commit_message)
+            
+            return commit_message.strip()
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            
+            # Check for specific error types
+            if "rate limit" in error_str or "too many requests" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff with jitter
+                    click.echo(f"Rate limit hit. Waiting {wait_time:.1f} seconds before retry {attempt + 2}/{max_retries}...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return "Error: Rate limit exceeded. Please try again in a few minutes."
+            
+            elif "500 internal server error" in error_str or "502 bad gateway" in error_str or "503 service unavailable" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    click.echo(f"Server error (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return "Error: OpenAI service is currently experiencing issues. Please try again later."
+            
+            elif "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
+                return "Error: Invalid API key. Please check your OpenAI API key and run 'ai-commit-assistant setup' if needed."
+            
+            elif "quota" in error_str or "billing" in error_str:
+                return "Error: OpenAI API quota exceeded. Please check your billing and usage limits."
+            
+            elif "network" in error_str or "connection" in error_str or "timeout" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = 2 + random.uniform(0, 1)
+                    click.echo(f"Network error (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return "Error: Network connection issues. Please check your internet connection."
+            
+            else:
+                # For unknown errors, try once more if we have retries left
+                if attempt < max_retries - 1:
+                    click.echo(f"Unexpected error (attempt {attempt + 1}/{max_retries}). Retrying...")
+                    time.sleep(1)
+                    continue
+                else:
+                    return f"Error generating commit message: {str(e)}"
+    
+    return "Error: All retry attempts failed."
 
-
-def generate_detailed_commit_message(diff, files, temperature=0.7):
+def generate_detailed_commit_message(diff, files, temperature=0.7, max_retries=3):
     """
-    Generate a detailed commit message with header and body using OpenAI's API.
+    Generate a detailed commit message with header and body using OpenAI's API with retry logic.
     
     Args:
         diff (str): The git diff text
         files (list): List of changed files
         temperature (float): Controls randomness in AI response (0.0-1.0)
+        max_retries (int): Maximum number of retry attempts
         
     Returns:
         str: Generated detailed commit message with header and body
@@ -423,36 +477,82 @@ def generate_detailed_commit_message(diff, files, temperature=0.7):
     Generate a clean commit message without any commit hashes, issue numbers, or metadata.
     """
     
-    # Call the OpenAI API to generate a detailed commit message
-    try:
-        # Get client with lazy initialization
-        client = get_openai_client()
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=temperature,
-            max_tokens=300,  # Increased for detailed messages
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0
-        )
-        
-        # Extract the message from the response
-        commit_message = response.choices[0].message.content.strip()
-        
-        # Clean up the message - remove any remaining hashes or unwanted patterns
-        import re
-        commit_message = re.sub(r'\s*[\(\[]?[a-f0-9]{6,8}[\)\]]?\s*$', '', commit_message)
-        commit_message = re.sub(r'\s*#[a-f0-9]{6,8}\s*', '', commit_message)
-        
-        return commit_message.strip()
-        
-    except Exception as e:
-        return f"Error generating detailed commit message: {str(e)}"
+    # Retry loop for API calls
+    for attempt in range(max_retries):
+        try:
+            # Get client with lazy initialization
+            client = get_openai_client()
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=temperature,
+                max_tokens=300,  # Increased for detailed messages
+                top_p=1,
+                frequency_penalty=0,
+                presence_penalty=0
+            )
+            
+            # Extract the message from the response
+            commit_message = response.choices[0].message.content.strip()
+            
+            # Clean up the message - remove any remaining hashes or unwanted patterns
+            import re
+            commit_message = re.sub(r'\s*[\(\[]?[a-f0-9]{6,8}[\)\]]?\s*$', '', commit_message)
+            commit_message = re.sub(r'\s*#[a-f0-9]{6,8}\s*', '', commit_message)
+            
+            return commit_message.strip()
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            
+            # Check for specific error types (same logic as above)
+            if "rate limit" in error_str or "too many requests" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    click.echo(f"Rate limit hit. Waiting {wait_time:.1f} seconds before retry {attempt + 2}/{max_retries}...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return "Error: Rate limit exceeded. Please try again in a few minutes."
+            
+            elif "500 internal server error" in error_str or "502 bad gateway" in error_str or "503 service unavailable" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    click.echo(f"Server error (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return "Error: OpenAI service is currently experiencing issues. Please try again later."
+            
+            elif "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
+                return "Error: Invalid API key. Please check your OpenAI API key and run 'ai-commit-assistant setup' if needed."
+            
+            elif "quota" in error_str or "billing" in error_str:
+                return "Error: OpenAI API quota exceeded. Please check your billing and usage limits."
+            
+            elif "network" in error_str or "connection" in error_str or "timeout" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = 2 + random.uniform(0, 1)
+                    click.echo(f"Network error (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return "Error: Network connection issues. Please check your internet connection."
+            
+            else:
+                if attempt < max_retries - 1:
+                    click.echo(f"Unexpected error (attempt {attempt + 1}/{max_retries}). Retrying...")
+                    time.sleep(1)
+                    continue
+                else:
+                    return f"Error generating detailed commit message: {str(e)}"
+    
+    return "Error: All retry attempts failed."
+
 
 
 def suggest_commit_message(count=1, temperature=0.7):
@@ -553,16 +653,16 @@ def execute_git_commit(message, is_detailed=False):
             ], capture_output=True, text=True)
         
         if result.returncode == 0:
-            click.secho("✓ Commit successful!", fg='green')
+            click.secho("+ Commit successful!", fg='green')
             click.echo(result.stdout)
             return True
         else:
-            click.secho("✗ Commit failed:", fg='red')
+            click.secho("X Commit failed:", fg='red')
             click.echo(result.stderr)
             return False
             
     except Exception as e:
-        click.secho(f"✗ Error executing commit: {str(e)}", fg='red')
+        click.secho(f"X Error executing commit: {str(e)}", fg='red')
         return False
 
 
@@ -640,28 +740,21 @@ def cli():
     
     This tool analyzes your staged changes and suggests meaningful commit messages.
     """
-    pass
-    # # Check if OpenAI API key is available
-    # if not os.getenv("OPENAI_API_KEY"):
-    #     # Path to .env file in the same directory as the script
-    #     script_dir = os.path.dirname(os.path.abspath(__file__))
-    #     env_path = os.path.join(script_dir, '.env')
+    # Try to load from multiple locations
+    if not os.getenv("OPENAI_API_KEY"):
+        # Path to .env file in the same directory as the script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        env_path = os.path.join(script_dir, '.env')
         
-    #     # Also check user's home directory
-    #     home_env_path = os.path.join(os.path.expanduser("~"), '.commit-assistant', '.env')
+        # Also check user's home directory
+        home_env_path = os.path.join(os.path.expanduser("~"), '.commit-assistant', '.env')
         
-    #     if os.path.exists(env_path):
-    #         # Load from script directory
-    #         load_dotenv(env_path)
-    #     elif os.path.exists(home_env_path):
-    #         # Load from user's home directory
-    #         load_dotenv(home_env_path)
-            
-    #     # Final check if key is loaded
-    #     if not os.getenv("OPENAI_API_KEY"):
-    #         click.echo("Error: OpenAI API key not found. Please set the OPENAI_API_KEY environment variable or create a .env file.")
-    #         click.echo("You can get an API key from https://platform.openai.com/api-keys")
-    #         sys.exit(1)
+        # Try loading from both locations
+        if os.path.exists(home_env_path):
+            load_dotenv(home_env_path, override=True)
+        elif os.path.exists(env_path):
+            load_dotenv(env_path, override=True)
+
 
 
 @cli.command()
@@ -855,17 +948,104 @@ def setup():
         if not overwrite:
             click.echo("Setup canceled.")
             return
-            
-    # Get API key from user
-    api_key = click.prompt("Enter your OpenAI API key", hide_input=True)
+    
+    # Get API key from user with better cross-platform support
+    click.echo("\nOpenAI API Key Setup")
+    click.echo("=" * 40)
+    click.echo("You can get your API key from: https://platform.openai.com/api-keys")
+    click.echo("The key should start with 'sk-' and be about 51 characters long.")
+    click.echo("")
+    
+    # Try multiple methods to get the API key
+    api_key = None
+    
+    # Method 1: Try with hide_input=True (works on most systems)
+    try:
+        api_key = click.prompt("Enter your OpenAI API key (input will be hidden)", hide_input=True, type=str)
+        if api_key and api_key.strip():
+            api_key = api_key.strip()
+        else:
+            api_key = None
+    except:
+        api_key = None
+    
+    # Method 2: If that failed, try without hiding (fallback for Windows)
+    if not api_key:
+        click.echo("Warning: Hidden input not working. Trying visible input...")
+        click.echo("Warning: Your API key will be visible on screen!")
+        api_key = click.prompt("Enter your OpenAI API key (visible)", type=str)
+        if api_key:
+            api_key = api_key.strip()
+    
+    # Method 3: Manual file creation if both failed
+    if not api_key or len(api_key) < 20:
+        click.echo("Error: API key input failed or key seems too short.")
+        click.echo("\nManual Setup Instructions:")
+        click.echo("=" * 40)
+        click.echo(f"1. Create this file: {env_path}")
+        click.echo("2. Add this line to the file:")
+        click.echo("   OPENAI_API_KEY=your_actual_api_key_here")
+        click.echo("3. Replace 'your_actual_api_key_here' with your real API key")
+        click.echo("\nAlternative: Set environment variable manually:")
+        if platform.system() == "Windows":
+            click.echo("   set OPENAI_API_KEY=your_api_key")
+            click.echo("   # or in PowerShell:")
+            click.echo("   $env:OPENAI_API_KEY='your_api_key'")
+        else:
+            click.echo("   export OPENAI_API_KEY=your_api_key")
+        return
+    
+    # Validate API key format
+    if not api_key.startswith('sk-'):
+        click.echo("Warning: API key doesn't start with 'sk-'. This might not be correct.")
+        if not click.confirm("Continue anyway?", default=False):
+            click.echo("Setup canceled.")
+            return
+    
+    if len(api_key) < 40:
+        click.echo("Warning: API key seems too short. OpenAI keys are usually ~51 characters.")
+        if not click.confirm("Continue anyway?", default=False):
+            click.echo("Setup canceled.")
+            return
     
     # Create .env file
-    with open(env_path, 'w') as f:
-        f.write(f"OPENAI_API_KEY={api_key}\n")
-    
-    click.secho("Configuration saved successfully!", fg='green')
-    click.echo(f"Configuration file: {env_path}")
-
+    try:
+        with open(env_path, 'w') as f:
+            f.write(f"OPENAI_API_KEY={api_key}\n")
+        
+        # Verify the file was written correctly
+        with open(env_path, 'r') as f:
+            content = f.read().strip()
+        
+        if content and '=' in content and len(content) > 20:
+            click.secho("Configuration saved successfully!", fg='green')
+            click.echo(f"Configuration file: {env_path}")
+            
+            # Test the configuration
+            click.echo("\nTesting configuration...")
+            test_key = os.getenv("OPENAI_API_KEY")
+            
+            # Load the new env file to test
+            from dotenv import load_dotenv
+            load_dotenv(env_path, override=True)
+            test_key = os.getenv("OPENAI_API_KEY")
+            
+            if test_key and test_key.strip() == api_key:
+                click.secho("Configuration test passed!", fg='green')
+                click.echo("\nYou can now use: ai-commit-assistant suggest")
+            else:
+                click.secho("Configuration test failed. Please check the file manually.", fg='yellow')
+                click.echo(f"Expected: {api_key[:10]}...")
+                click.echo(f"Found: {test_key[:10] if test_key else 'None'}...")
+        else:
+            click.secho("Configuration file seems empty or corrupted.", fg='red')
+            click.echo("Please try manual setup or check file permissions.")
+            
+    except Exception as e:
+        click.secho(f"Error saving configuration: {str(e)}", fg='red')
+        click.echo("\nManual Setup Instructions:")
+        click.echo(f"1. Create file: {env_path}")
+        click.echo(f"2. Add line: OPENAI_API_KEY={api_key}")
 
 # Hook-related CLI commands using the hooks module
 
@@ -882,7 +1062,7 @@ def install_hook():
     success, message = hooks.install_git_hook()
     
     if success:
-        click.secho("✓ " + message, fg='green')
+        click.secho("+ " + message, fg='green')
         click.echo("\nThe hook is now installed! Here's how it works:")
         click.echo("1. Stage your changes: git add .")
         click.echo("2. Start a commit: git commit")
@@ -900,13 +1080,13 @@ def install_hook():
             
     else:
         if "already exists" in message:
-            click.secho("⚠ " + message, fg='yellow')
+            click.secho("! " + message, fg='yellow')
             click.echo("\nTo reinstall, first remove the existing hook:")
-            click.echo("  python -m commitassist.main uninstall-hook")
+            click.echo("  ai-commit-assistant uninstall-hook")
             click.echo("Then install again:")
-            click.echo("  python -m commitassist.main install-hook")
+            click.echo("  ai-commit-assistant install-hook")
         else:
-            click.secho("✗ " + message, fg='red')
+            click.secho("X " + message, fg='red')
 
 
 @cli.command()
@@ -944,8 +1124,8 @@ def install_global_hook():
     success, message = hooks.install_global_git_hook()
     
     if success:
-        click.secho("✓ " + message, fg='green')
-        click.echo("\n🎉 Global hook installed successfully!")
+        click.secho("+ " + message, fg='green')
+        click.echo("\nGlobal hook installed successfully!")
         click.echo("\nThis hook will now work in ALL your Git repositories!")
         click.echo("\nHow it works:")
         click.echo("1. Go to any Git repository")
@@ -953,7 +1133,7 @@ def install_global_hook():
         click.echo("3. Start commit: git commit")
         click.echo("4. See AI suggestions in your editor")
         
-        click.echo(f"\n📍 Hook location: {message.split(': ')[1]}")
+        click.echo(f"\nHook location: {message.split(': ')[1]}")
         
         if platform.system() == "Windows":
             click.echo("\n" + "="*50)
@@ -962,7 +1142,7 @@ def install_global_hook():
             click.echo("="*50)
             
     else:
-        click.secho("✗ " + message, fg='red')
+        click.secho("X " + message, fg='red')
 
 
 @cli.command()
@@ -986,7 +1166,6 @@ def uninstall_global_hook():
         click.secho("✗ " + message, fg='red')
 
 
-@cli.command()
 def hook_status():
     """
     Check the status of Git hook installation (both local and global).
@@ -999,12 +1178,12 @@ def hook_status():
     local_status = hooks.check_git_hook_status()
     
     if not local_status['git_repo']:
-        click.secho("✗ Not in a Git repository", fg='red')
+        click.secho("X Not in a Git repository", fg='red')
     elif local_status['hook_exists'] and local_status['is_our_hook']:
-        click.secho("✓ Local hook installed", fg='green')
+        click.secho("+ Local hook installed", fg='green')
         click.echo(f"Location: {local_status['hook_path']}")
     else:
-        click.secho("✗ No local hook", fg='red')
+        click.secho("- No local hook", fg='red')
     
     click.echo()
     
@@ -1013,11 +1192,11 @@ def hook_status():
     global_status = hooks.check_global_hook_status()
     
     if global_status['global_hooks_configured'] and global_status['is_our_hook']:
-        click.secho("✓ Global hook installed and active", fg='green')
-        click.echo("✨ Works in ALL Git repositories!")
+        click.secho("+ Global hook installed and active", fg='green')
+        click.echo("Works in ALL Git repositories!")
         click.echo(f"Location: {global_status['hook_path']}")
     else:
-        click.secho("✗ No global hook", fg='red')
+        click.secho("- No global hook", fg='red')
     
     click.echo("=" * 60)
     
@@ -1025,16 +1204,16 @@ def hook_status():
     click.secho("RECOMMENDATIONS:", fg='yellow', bold=True)
     
     if global_status['global_hooks_configured'] and global_status['is_our_hook']:
-        click.echo("✅ You're all set! Global hook works everywhere.")
+        click.echo("You're all set! Global hook works everywhere.")
     else:
-        click.echo("💡 Install global hook for convenience:")
-        click.echo("   python -m commitassist.main install-global-hook")
+        click.echo("Install global hook for convenience:")
+        click.echo("   ai-commit-assistant install-global-hook")
         click.echo("   (Works in all repositories, setup once)")
     
     click.echo()
     click.echo("Alternative commands:")
-    click.echo("• Local hook:  python -m commitassist.main install-hook")
-    click.echo("• Global hook: python -m commitassist.main install-global-hook")
+    click.echo("• Local hook:  ai-commit-assistant install-hook")
+    click.echo("• Global hook: ai-commit-assistant install-global-hook")
 
 
 @cli.command()
@@ -1070,6 +1249,50 @@ def global_hook_status():
     
     click.echo("=" * 50)
 
+# Debug command to test API connectivity
+@cli.command()
+def test_api():
+    """
+    Test OpenAI API connectivity and authentication.
+    """
+    click.echo("Testing OpenAI API connectivity...")
+    
+    try:
+        client = get_openai_client()
+        
+        # Simple test request
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "user", "content": "Say 'API test successful' if you can read this."}
+            ],
+            max_tokens=10,
+            temperature=0
+        )
+        
+        result = response.choices[0].message.content.strip()
+        click.secho("+ API test successful!", fg='green')
+        click.echo(f"Response: {result}")
+        
+        # Test rate limits and usage
+        click.echo("\nAPI connection is working properly.")
+        click.echo("You can now use: ai-commit-assistant suggest")
+        
+    except Exception as e:
+        error_str = str(e).lower()
+        
+        if "authentication" in error_str or "api key" in error_str:
+            click.secho("X API key authentication failed", fg='red')
+            click.echo("Please check your API key with: ai-commit-assistant setup")
+        elif "quota" in error_str or "billing" in error_str:
+            click.secho("X API quota/billing issue", fg='red')
+            click.echo("Please check your OpenAI billing and usage limits")
+        elif "500" in error_str or "502" in error_str or "503" in error_str:
+            click.secho("X OpenAI service temporarily unavailable", fg='red')
+            click.echo("Please try again in a few minutes")
+        else:
+            click.secho(f"X API test failed: {str(e)}", fg='red')
+            click.echo("Please check your internet connection and API key")
 
 @cli.command()
 def commit():
