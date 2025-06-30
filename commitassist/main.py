@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import click
 import time
 import random
+import re
+import string
 
 # Import hook functions from the hooks module
 from . import hooks
@@ -755,6 +757,251 @@ def cli():
         elif os.path.exists(env_path):
             load_dotenv(env_path, override=True)
 
+def sanitize_api_key(raw_input):
+    """
+    Sanitize API key input by removing control characters and normalizing whitespace.
+    
+    Args:
+        raw_input (str): Raw input from user
+        
+    Returns:
+        str: Sanitized API key or None if invalid
+    """
+    if not raw_input:
+        return None
+    
+    # Convert to string if not already
+    raw_input = str(raw_input)
+    
+    # Remove all control characters (ASCII 0-31 except tab, newline, carriage return)
+    # This includes SYN (ASCII 22) and other problematic characters
+    sanitized = ''.join(char for char in raw_input 
+                       if ord(char) >= 32 or char in '\t\n\r')
+    
+    # Normalize whitespace - strip leading/trailing and collapse internal whitespace
+    sanitized = ' '.join(sanitized.split())
+    
+    # Remove any quotes that might have been added
+    sanitized = sanitized.strip('\'"')
+    
+    # Additional cleanup for common copy-paste issues
+    # Remove zero-width characters
+    zero_width_chars = ['\u200b', '\u200c', '\u200d', '\ufeff']  # Zero-width space, ZWNJ, ZWJ, BOM
+    for char in zero_width_chars:
+        sanitized = sanitized.replace(char, '')
+    
+    # Remove any non-printable characters that might remain
+    sanitized = ''.join(char for char in sanitized if char in string.printable).strip()
+    
+    return sanitized if sanitized else None
+
+
+def validate_api_key(api_key):
+    """
+    Validate API key format and content.
+    
+    Args:
+        api_key (str): API key to validate
+        
+    Returns:
+        dict: Validation result with 'valid' boolean and 'error' message if invalid
+    """
+    if not api_key:
+        return {'valid': False, 'error': 'API key is empty'}
+    
+    # Check for obvious placeholders
+    placeholders = [
+        'key', 'your_api_key', 'your_api_key_here', 'your_actual_api_key_here',
+        'sk-example', 'sk-placeholder', 'sk-your_key_here', 'insert_key_here'
+    ]
+    
+    if api_key.lower() in placeholders:
+        return {'valid': False, 'error': 'API key appears to be a placeholder'}
+    
+    # Check basic format
+    if not api_key.startswith('sk-'):
+        return {'valid': False, 'error': "API key should start with 'sk-'"}
+    
+    # Check length (OpenAI keys are typically around 51 characters)
+    if len(api_key) < 40:
+        return {'valid': False, 'error': f'API key too short ({len(api_key)} chars). Expected ~51 characters'}
+    
+    if len(api_key) > 80:
+        return {'valid': False, 'error': f'API key too long ({len(api_key)} chars). Expected ~51 characters'}
+    
+    # Check for valid characters (OpenAI keys use alphanumeric + some symbols)
+    if not re.match(r'^sk-[a-zA-Z0-9\-_]+$', api_key):
+        return {'valid': False, 'error': 'API key contains invalid characters'}
+    
+    # Check for suspicious patterns
+    if api_key.count('-') > 5:  # Too many dashes
+        return {'valid': False, 'error': 'API key has suspicious format (too many dashes)'}
+    
+    # Check for repeated characters (likely corrupted)
+    if len(set(api_key)) < 10:  # Too few unique characters
+        return {'valid': False, 'error': 'API key has too few unique characters'}
+    
+    return {'valid': True, 'error': None}
+
+
+def test_saved_configuration(env_path, expected_key):
+    """
+    Test that the saved configuration can be loaded correctly.
+    
+    Args:
+        env_path (str): Path to the .env file
+        expected_key (str): Expected API key value
+        
+    Returns:
+        dict: Test result with 'success' boolean and 'error' message if failed
+    """
+    try:
+        # Clear any existing environment variable
+        if 'OPENAI_API_KEY' in os.environ:
+            original_key = os.environ['OPENAI_API_KEY']
+            del os.environ['OPENAI_API_KEY']
+        else:
+            original_key = None
+        
+        # Try to load the saved file
+        from dotenv import load_dotenv
+        load_dotenv(env_path, override=True)
+        
+        # Get the loaded key
+        loaded_key = os.getenv('OPENAI_API_KEY')
+        
+        # Restore original environment
+        if original_key:
+            os.environ['OPENAI_API_KEY'] = original_key
+        elif 'OPENAI_API_KEY' in os.environ:
+            del os.environ['OPENAI_API_KEY']
+        
+        # Check if loading worked
+        if not loaded_key:
+            return {'success': False, 'error': 'Could not load API key from saved file'}
+        
+        if loaded_key != expected_key:
+            return {'success': False, 'error': f'Loaded key differs from saved key'}
+        
+        return {'success': True, 'error': None}
+        
+    except Exception as e:
+        return {'success': False, 'error': f'Exception during test: {str(e)}'}
+
+
+# Also add a command to clean existing configuration
+@cli.command()
+def clean_config():
+    """
+    Remove saved configuration file.
+    Windows-safe version.
+    """
+    config_dir = os.path.join(os.path.expanduser("~"), '.commit-assistant')
+    env_path = os.path.join(config_dir, '.env')
+    
+    if os.path.exists(env_path):
+        click.echo(f"Found configuration file: {env_path}")
+        if click.confirm("Remove this configuration file?", default=False):
+            try:
+                os.remove(env_path)
+                click.secho("Configuration file removed.", fg='green')
+                
+                # Remove directory if empty
+                try:
+                    if os.path.exists(config_dir) and not os.listdir(config_dir):
+                        os.rmdir(config_dir)
+                        click.echo("Configuration directory removed.")
+                except OSError:
+                    # Directory not empty or permission issue
+                    pass
+                    
+            except Exception as e:
+                click.secho(f"Error removing file: {e}", fg='red')
+        else:
+            click.echo("Configuration file kept.")
+    else:
+        click.echo("No configuration file found to remove.")
+        click.echo(f"Checked: {env_path}")
+
+
+# Add a debug command to inspect configuration
+@cli.command()
+def debug_config():
+    """
+    Show configuration file locations and status.
+    Windows-safe version.
+    """
+    click.echo("Configuration Debug")
+    click.echo("=" * 40)
+    
+    # Home config file
+    home_config = os.path.join(os.path.expanduser("~"), '.commit-assistant', '.env')
+    click.echo(f"\nHome config: {home_config}")
+    click.echo(f"Exists: {os.path.exists(home_config)}")
+    
+    if os.path.exists(home_config):
+        try:
+            # Try UTF-8 first, fallback to other encodings
+            content = None
+            for encoding in ['utf-8', 'utf-8-sig', 'ascii', 'cp1252']:
+                try:
+                    with open(home_config, 'r', encoding=encoding) as f:
+                        content = f.read().strip()
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if content and 'OPENAI_API_KEY=' in content:
+                lines = content.split('\n')
+                for line in lines:
+                    if line.strip().startswith('OPENAI_API_KEY='):
+                        key_value = line.split('=', 1)[1]
+                        click.echo(f"Contains API key: {key_value[:15]}... (length: {len(key_value)})")
+                        break
+            else:
+                click.echo("No OPENAI_API_KEY found or couldn't read file")
+                
+        except Exception as e:
+            click.echo(f"Error reading file: {e}")
+    
+    # Current directory .env
+    current_env = os.path.abspath('.env')
+    click.echo(f"\nCurrent dir .env: {current_env}")
+    click.echo(f"Exists: {os.path.exists(current_env)}")
+    
+    if os.path.exists(current_env):
+        try:
+            # Try UTF-8 first, fallback to other encodings
+            content = None
+            for encoding in ['utf-8', 'utf-8-sig', 'ascii', 'cp1252']:
+                try:
+                    with open(current_env, 'r', encoding=encoding) as f:
+                        content = f.read().strip()
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if content and 'OPENAI_API_KEY=' in content:
+                lines = content.split('\n')
+                for line in lines:
+                    if line.strip().startswith('OPENAI_API_KEY='):
+                        key_value = line.split('=', 1)[1]
+                        click.echo(f"Contains API key: {key_value[:15]}... (length: {len(key_value)})")
+                        break
+            else:
+                click.echo("No OPENAI_API_KEY found or couldn't read file")
+                
+        except Exception as e:
+            click.echo(f"Error reading file: {e}")
+    
+    # Environment variable
+    env_key = os.getenv('OPENAI_API_KEY')
+    click.echo(f"\nEnvironment variable: {'Set' if env_key else 'Not set'}")
+    if env_key:
+        click.echo(f"Value: {env_key[:15]}... (length: {len(env_key)})")
+    
+    click.echo("\n" + "=" * 40)
+
 
 
 @cli.command()
@@ -934,6 +1181,8 @@ def setup():
     Set up Commit Assistant configuration.
     
     Creates necessary configuration files and directories.
+    Simple, cross-platform setup that supports copy-paste.
+    Windows-safe version.
     """
     # Create config directory in user's home
     config_dir = os.path.join(os.path.expanduser("~"), '.commit-assistant')
@@ -944,108 +1193,305 @@ def setup():
     
     # Check if .env already exists
     if os.path.exists(env_path):
-        overwrite = click.confirm("Configuration file already exists. Overwrite?", default=False)
+        click.echo(f"\nConfiguration file already exists at: {env_path}")
+        overwrite = click.confirm("Do you want to update it with a new API key?", default=True)
         if not overwrite:
             click.echo("Setup canceled.")
             return
     
-    # Get API key from user with better cross-platform support
-    click.echo("\nOpenAI API Key Setup")
-    click.echo("=" * 40)
-    click.echo("You can get your API key from: https://platform.openai.com/api-keys")
-    click.echo("The key should start with 'sk-' and be about 51 characters long.")
+    # Simple, clear instructions
+    click.echo("\n" + "=" * 60)
+    click.echo("OpenAI API Key Setup")
+    click.echo("=" * 60)
+    click.echo("Get your API key from: https://platform.openai.com/api-keys")
     click.echo("")
+    click.echo("Your API key should:")
+    click.echo("  - Start with 'sk-'")
+    click.echo("  - Be a long string (can be 50-200+ characters)")
+    click.echo("  - You can copy-paste it here")
+    click.echo("")
+    click.echo("The input will be visible for easy copy-paste verification.")
+    click.echo("=" * 60)
     
-    # Try multiple methods to get the API key
+    # Get API key with simple, visible input
     api_key = None
+    max_attempts = 3
     
-    # Method 1: Try with hide_input=True (works on most systems)
-    try:
-        api_key = click.prompt("Enter your OpenAI API key (input will be hidden)", hide_input=True, type=str)
-        if api_key and api_key.strip():
-            api_key = api_key.strip()
-        else:
-            api_key = None
-    except:
-        api_key = None
+    for attempt in range(max_attempts):
+        try:
+            click.echo(f"\nAttempt {attempt + 1} of {max_attempts}")
+            
+            # Simple prompt - no hiding, works everywhere
+            raw_input = click.prompt("Paste your OpenAI API key here", type=str, default="")
+            
+            if not raw_input or not raw_input.strip():
+                click.secho("No input provided. Please paste your API key.", fg='yellow')
+                continue
+            
+            # Basic sanitization - just remove obvious problematic characters
+            api_key = sanitize_api_key_simple(raw_input)
+            
+            if not api_key:
+                click.secho("Could not process the input. Please try again.", fg='red')
+                continue
+            
+            # Show what we got
+            click.echo(f"\nReceived API key:")
+            click.echo(f"  Length: {len(api_key)} characters")
+            click.echo(f"  Starts with: {api_key[:10]}...")
+            click.echo(f"  Ends with: ...{api_key[-10:]}")
+            
+            # Basic validation
+            validation_result = validate_api_key_simple(api_key)
+            if not validation_result['valid']:
+                click.secho(f"Warning: {validation_result['warning']}", fg='yellow')
+                if not click.confirm("Continue anyway?", default=True):
+                    continue
+            else:
+                click.secho("API key format looks good!", fg='green')
+            
+            # Confirm before saving
+            if click.confirm("Save this API key?", default=True):
+                break
+            else:
+                api_key = None
+                continue
+                
+        except KeyboardInterrupt:
+            click.echo("\nSetup canceled by user.")
+            return
+        except Exception as e:
+            click.secho(f"Error: {str(e)}", fg='red')
+            if attempt < max_attempts - 1:
+                click.echo("Please try again.")
+                continue
     
-    # Method 2: If that failed, try without hiding (fallback for Windows)
     if not api_key:
-        click.echo("Warning: Hidden input not working. Trying visible input...")
-        click.echo("Warning: Your API key will be visible on screen!")
-        api_key = click.prompt("Enter your OpenAI API key (visible)", type=str)
-        if api_key:
-            api_key = api_key.strip()
-    
-    # Method 3: Manual file creation if both failed
-    if not api_key or len(api_key) < 20:
-        click.echo("Error: API key input failed or key seems too short.")
-        click.echo("\nManual Setup Instructions:")
-        click.echo("=" * 40)
-        click.echo(f"1. Create this file: {env_path}")
-        click.echo("2. Add this line to the file:")
-        click.echo("   OPENAI_API_KEY=your_actual_api_key_here")
-        click.echo("3. Replace 'your_actual_api_key_here' with your real API key")
-        click.echo("\nAlternative: Set environment variable manually:")
-        if platform.system() == "Windows":
-            click.echo("   set OPENAI_API_KEY=your_api_key")
-            click.echo("   # or in PowerShell:")
-            click.echo("   $env:OPENAI_API_KEY='your_api_key'")
-        else:
-            click.echo("   export OPENAI_API_KEY=your_api_key")
+        click.secho("\nCould not get a valid API key.", fg='red')
+        show_manual_setup_instructions(env_path)
         return
     
-    # Validate API key format
-    if not api_key.startswith('sk-'):
-        click.echo("Warning: API key doesn't start with 'sk-'. This might not be correct.")
-        if not click.confirm("Continue anyway?", default=False):
-            click.echo("Setup canceled.")
-            return
-    
-    if len(api_key) < 40:
-        click.echo("Warning: API key seems too short. OpenAI keys are usually ~51 characters.")
-        if not click.confirm("Continue anyway?", default=False):
-            click.echo("Setup canceled.")
-            return
-    
-    # Create .env file
+    # Save the API key
     try:
-        with open(env_path, 'w') as f:
-            f.write(f"OPENAI_API_KEY={api_key}\n")
+        save_api_key_to_file(env_path, api_key)
         
-        # Verify the file was written correctly
-        with open(env_path, 'r') as f:
-            content = f.read().strip()
-        
-        if content and '=' in content and len(content) > 20:
-            click.secho("Configuration saved successfully!", fg='green')
-            click.echo(f"Configuration file: {env_path}")
-            
-            # Test the configuration
-            click.echo("\nTesting configuration...")
-            test_key = os.getenv("OPENAI_API_KEY")
-            
-            # Load the new env file to test
-            from dotenv import load_dotenv
-            load_dotenv(env_path, override=True)
-            test_key = os.getenv("OPENAI_API_KEY")
-            
-            if test_key and test_key.strip() == api_key:
-                click.secho("Configuration test passed!", fg='green')
-                click.echo("\nYou can now use: ai-commit-assistant suggest")
-            else:
-                click.secho("Configuration test failed. Please check the file manually.", fg='yellow')
-                click.echo(f"Expected: {api_key[:10]}...")
-                click.echo(f"Found: {test_key[:10] if test_key else 'None'}...")
+        # Test the saved configuration
+        click.echo("\nTesting the saved configuration...")
+        if test_api_key_loading(env_path):
+            click.secho("Setup completed successfully!", fg='green')
+            click.echo(f"Configuration saved to: {env_path}")
+            click.echo("\nYou can now use:")
+            click.echo("  ai-commit-assistant suggest")
+            click.echo("  ai-commit-assistant quick")
         else:
-            click.secho("Configuration file seems empty or corrupted.", fg='red')
-            click.echo("Please try manual setup or check file permissions.")
+            click.secho("API key saved but there was an issue loading it.", fg='yellow')
+            click.echo("Try running: ai-commit-assistant test-api")
             
     except Exception as e:
         click.secho(f"Error saving configuration: {str(e)}", fg='red')
-        click.echo("\nManual Setup Instructions:")
-        click.echo(f"1. Create file: {env_path}")
-        click.echo(f"2. Add line: OPENAI_API_KEY={api_key}")
+        show_manual_setup_instructions(env_path)
+
+
+def sanitize_api_key_simple(raw_input):
+    """
+    Simple API key sanitization that preserves the key while removing obvious problems.
+    Windows-safe version.
+    
+    Args:
+        raw_input (str): Raw input from user
+        
+    Returns:
+        str: Cleaned API key or None if invalid
+    """
+    if not raw_input:
+        return None
+    
+    # Convert to string and strip whitespace
+    cleaned = str(raw_input).strip()
+    
+    # Remove common problematic characters but preserve the key content
+    # Remove control characters (0-31) except tab/newline/carriage return
+    cleaned = ''.join(char for char in cleaned if ord(char) >= 32 or char in '\t\n\r')
+    
+    # Remove zero-width characters that can come from copy-paste
+    # Using basic string replacement instead of Unicode escapes
+    zero_width_chars = [
+        '\u200b',  # Zero width space
+        '\u200c',  # Zero width non-joiner
+        '\u200d',  # Zero width joiner
+        '\ufeff',  # Byte order mark
+        '\u2060'   # Word joiner
+    ]
+    for char in zero_width_chars:
+        cleaned = cleaned.replace(char, '')
+    
+    # Remove quotes if the entire thing is wrapped in quotes
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or \
+       (cleaned.startswith("'") and cleaned.endswith("'")):
+        cleaned = cleaned[1:-1]
+    
+    # Final strip
+    cleaned = cleaned.strip()
+    
+    # Remove any internal newlines/tabs (keep it as one line)
+    cleaned = ' '.join(cleaned.split())
+    
+    return cleaned if cleaned else None
+
+
+def validate_api_key_simple(api_key):
+    """
+    Simple validation that doesn't restrict length but checks basic format.
+    Windows-safe version.
+    
+    Args:
+        api_key (str): API key to validate
+        
+    Returns:
+        dict: Validation result with 'valid' boolean and 'warning' message
+    """
+    if not api_key:
+        return {'valid': False, 'warning': 'API key is empty'}
+    
+    # Check for obvious placeholders
+    placeholders = [
+        'key', 'your_api_key', 'your_api_key_here', 'your_actual_api_key_here',
+        'sk-example', 'sk-placeholder', 'sk-your_key_here', 'insert_key_here',
+        'paste_your_key_here', 'replace_with_your_key'
+    ]
+    
+    if api_key.lower() in placeholders:
+        return {'valid': False, 'warning': 'This looks like a placeholder, not a real API key'}
+    
+    # Check if it starts with sk-
+    if not api_key.startswith('sk-'):
+        return {'valid': False, 'warning': "OpenAI API keys should start with 'sk-'"}
+    
+    # Check minimum length (very basic check)
+    if len(api_key) < 20:
+        return {'valid': False, 'warning': f'API key seems too short ({len(api_key)} chars)'}
+    
+    # Check for reasonable character set (allow more flexibility)
+    # Using basic character checking instead of regex
+    allowed_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./+=')
+    suspicious_chars = [c for c in api_key if c not in allowed_chars]
+    
+    if suspicious_chars:
+        return {'valid': False, 'warning': f'API key contains unusual characters: {suspicious_chars[:5]}'}
+    
+    # All checks passed
+    return {'valid': True, 'warning': None}
+
+
+def save_api_key_to_file(env_path, api_key):
+    """
+    Save API key to .env file with proper formatting.
+    Windows-safe version with explicit line ending handling.
+    
+    Args:
+        env_path (str): Path to .env file
+        api_key (str): API key to save
+    """
+    # Create the content with Windows-safe line ending
+    content = f"OPENAI_API_KEY={api_key}\n"
+    
+    # Save with UTF-8 encoding
+    # Use 'w' mode which will use the system's default line endings
+    try:
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+    except UnicodeEncodeError:
+        # Fallback to ASCII if UTF-8 fails
+        with open(env_path, 'w', encoding='ascii', errors='ignore') as f:
+            f.write(content)
+    
+    # Verify the file was written correctly
+    try:
+        with open(env_path, 'r', encoding='utf-8') as f:
+            saved_content = f.read().strip()
+    except UnicodeDecodeError:
+        with open(env_path, 'r', encoding='ascii', errors='ignore') as f:
+            saved_content = f.read().strip()
+    
+    # Basic verification
+    if not saved_content.startswith('OPENAI_API_KEY='):
+        raise Exception("File verification failed - content doesn't match expected format")
+    
+    saved_key = saved_content.split('=', 1)[1]
+    if saved_key != api_key:
+        raise Exception("File verification failed - saved key doesn't match input key")
+
+
+def test_api_key_loading(env_path):
+    """
+    Test that the API key can be loaded from the saved file.
+    Windows-safe version.
+    
+    Args:
+        env_path (str): Path to .env file
+        
+    Returns:
+        bool: True if loading works, False otherwise
+    """
+    try:
+        # Save current environment
+        original_key = os.environ.get('OPENAI_API_KEY')
+        
+        # Clear environment variable
+        if 'OPENAI_API_KEY' in os.environ:
+            del os.environ['OPENAI_API_KEY']
+        
+        # Try to load from file
+        from dotenv import load_dotenv
+        load_dotenv(env_path, override=True)
+        
+        # Check if it loaded
+        loaded_key = os.getenv('OPENAI_API_KEY')
+        success = loaded_key is not None and len(loaded_key.strip()) > 0
+        
+        # Restore original environment
+        if original_key:
+            os.environ['OPENAI_API_KEY'] = original_key
+        elif 'OPENAI_API_KEY' in os.environ:
+            del os.environ['OPENAI_API_KEY']
+        
+        return success
+        
+    except Exception as e:
+        click.echo(f"Loading test failed: {e}")
+        return False
+
+
+def show_manual_setup_instructions(env_path):
+    """
+    Show manual setup instructions as fallback.
+    Windows-safe version.
+    
+    Args:
+        env_path (str): Path where .env file should be created
+    """
+    click.echo("\nManual Setup Instructions:")
+    click.echo("=" * 50)
+    click.echo(f"1. Create this file: {env_path}")
+    click.echo("2. Add this line to the file:")
+    click.echo("   OPENAI_API_KEY=your_actual_api_key_here")
+    click.echo("3. Replace 'your_actual_api_key_here' with your real API key")
+    click.echo("")
+    click.echo("Alternative - Set environment variable:")
+    
+    if platform.system() == "Windows":
+        click.echo("Windows Command Prompt:")
+        click.echo("   set OPENAI_API_KEY=your_api_key")
+        click.echo("")
+        click.echo("Windows PowerShell:")
+        click.echo("   $env:OPENAI_API_KEY='your_api_key'")
+    else:
+        click.echo("Unix/Linux/Mac:")
+        click.echo("   export OPENAI_API_KEY=your_api_key")
+    
+    click.echo("")
+    click.echo("Then test with: ai-commit-assistant test-api")
+
 
 # Hook-related CLI commands using the hooks module
 
@@ -1254,13 +1700,44 @@ def global_hook_status():
 def test_api():
     """
     Test OpenAI API connectivity and authentication.
+    Windows-safe version.
     """
-    click.echo("Testing OpenAI API connectivity...")
+    click.echo("Testing OpenAI API...")
+    click.echo("=" * 40)
     
     try:
-        client = get_openai_client()
+        # Show what key we're using
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            # Try loading from config files
+            from dotenv import load_dotenv
+            
+            # Try current directory first
+            if os.path.exists('.env'):
+                load_dotenv('.env', override=True)
+                api_key = os.getenv("OPENAI_API_KEY")
+                if api_key:
+                    click.echo("Loaded API key from current directory .env")
+            
+            # Try home directory if not found
+            if not api_key:
+                home_env = os.path.join(os.path.expanduser("~"), '.commit-assistant', '.env')
+                if os.path.exists(home_env):
+                    load_dotenv(home_env, override=True)
+                    api_key = os.getenv("OPENAI_API_KEY")
+                    if api_key:
+                        click.echo(f"Loaded API key from home config: {home_env}")
         
-        # Simple test request
+        if not api_key:
+            click.secho("No API key found!", fg='red')
+            click.echo("Run: ai-commit-assistant setup")
+            return
+        
+        click.echo(f"Using API key: {api_key[:15]}... (length: {len(api_key)})")
+        
+        # Test the API
+        client = OpenAI(api_key=api_key.strip())
+        
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -1271,28 +1748,22 @@ def test_api():
         )
         
         result = response.choices[0].message.content.strip()
-        click.secho("+ API test successful!", fg='green')
+        click.secho("API test successful!", fg='green')
         click.echo(f"Response: {result}")
-        
-        # Test rate limits and usage
-        click.echo("\nAPI connection is working properly.")
-        click.echo("You can now use: ai-commit-assistant suggest")
+        click.echo("\nYou can now use: ai-commit-assistant suggest")
         
     except Exception as e:
-        error_str = str(e).lower()
+        click.secho(f"API test failed: {str(e)}", fg='red')
         
+        error_str = str(e).lower()
         if "authentication" in error_str or "api key" in error_str:
-            click.secho("X API key authentication failed", fg='red')
-            click.echo("Please check your API key with: ai-commit-assistant setup")
+            click.echo("Check your API key with: ai-commit-assistant setup")
         elif "quota" in error_str or "billing" in error_str:
-            click.secho("X API quota/billing issue", fg='red')
-            click.echo("Please check your OpenAI billing and usage limits")
-        elif "500" in error_str or "502" in error_str or "503" in error_str:
-            click.secho("X OpenAI service temporarily unavailable", fg='red')
-            click.echo("Please try again in a few minutes")
+            click.echo("Check your OpenAI billing and usage limits")
+        elif "network" in error_str or "connection" in error_str:
+            click.echo("Check your internet connection")
         else:
-            click.secho(f"X API test failed: {str(e)}", fg='red')
-            click.echo("Please check your internet connection and API key")
+            click.echo("Try: ai-commit-assistant setup")
 
 @cli.command()
 def commit():
